@@ -480,7 +480,12 @@ const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
 const parse = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y,m-1,d); };
 const addDays = (s,n) => { const d = parse(s); d.setDate(d.getDate()+n); return ymd(d); };
 const today = () => ymd(new Date());
-const weekOf = s => { const d = parse(s); d.setDate(d.getDate() - ((d.getDay()+6)%7)); return ymd(d); };
+const weekStart = () => (M.meta && M.meta.weekStart === 1) ? 1 : 0;   // 0 = Sunday (default), 1 = Monday
+const weekOf = s => { const d = parse(s); d.setDate(d.getDate() - ((d.getDay() - weekStart() + 7) % 7)); return ymd(d); };
+// Stored week dates may come from either convention; read them by their midweek day
+const normW = w => w ? weekOf(addDays(w, 3)) : '';
+const hasWeek = (t, W) => (t.weeks || []).some(w => normW(w) === W);
+const dayName = d => DOW[(parse(d).getDay() + 6) % 7];
 const curWeek = () => weekOf(today());
 const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -530,11 +535,11 @@ function effWeek(t){
   if (t.status === 'done') return t.doneDate ? weekOf(t.doneDate) : '';
   const d = effDay(t); if (d) return weekOf(d);
   if (!t.week) return '';
-  const cw = curWeek(); return t.week < cw ? cw : t.week;
+  const cw = curWeek(), w = normW(t.week); return w < cw ? cw : w;
 }
 const stepsOf = t => t.checklist || [];
 function sDay(c){ if (c.done) return c.doneDate || ''; if (!c.day) return ''; const td = today(); return c.day < td ? td : c.day; }
-function sWeek(c){ if (c.done) return c.doneDate ? weekOf(c.doneDate) : ''; const d = sDay(c); if (d) return weekOf(d); if (!c.week) return ''; const cw = curWeek(); return c.week < cw ? cw : c.week; }
+function sWeek(c){ if (c.done) return c.doneDate ? weekOf(c.doneDate) : ''; const d = sDay(c); if (d) return weekOf(d); if (!c.week) return ''; const cw = curWeek(), w = normW(c.week); return w < cw ? cw : w; }
 const sRolled = c => !c.done && c.day && c.day < today();
 function allSteps(){ const out = []; for (const t of M.tasks.values()) for (const c of stepsOf(t)) if (isOpen(t) || c.done) out.push({ t, c }); return out; }
 function findStep(tid, sid){ const t = M.tasks.get(tid); const c = t && stepsOf(t).find(x => x.id === sid); return c ? { t, c } : null; }
@@ -789,7 +794,7 @@ function setWhen(t, when){
   if (when === 'week'){ t.day = ''; t.week = UI.view === 'week' ? UI.week : curWeek(); }
   else if (when === 'nextweek'){ t.day = ''; t.week = addDays(curWeek(), 7); }
   else { t.day = when === 'today' ? today() : when; t.week = weekOf(t.day); }
-  if (!t.weeks.includes(t.week)) t.weeks.push(t.week);
+  if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week);
 }
 function setStatus(t, s){
   if (s === t.status) return;
@@ -818,13 +823,13 @@ function quickToday(id){
 function quickWeek(id){
   const t = M.tasks.get(id); if (!t) return;
   const target = UI.view === 'week' ? UI.week : curWeek();
-  if (effWeek(t) === target){ t.day=''; t.week=''; t.weeks = t.weeks.filter(w => w !== target); }
-  else { t.day=''; t.week=target; if (!t.weeks.includes(target)) t.weeks.push(target); }
+  if (effWeek(t) === target){ t.day=''; t.week=''; t.weeks = t.weeks.filter(w => normW(w) !== target); }
+  else { t.day=''; t.week=target; if (!hasWeek(t, target)) t.weeks.push(target); }
   saveTask(t); render();
 }
 function planDay(id, d){
   const t = M.tasks.get(id); if (!t) return;
-  if (d === 'week'){ t.day=''; t.week=UI.week; if (!t.weeks.includes(UI.week)) t.weeks.push(UI.week); }
+  if (d === 'week'){ t.day=''; t.week=UI.week; if (!hasWeek(t, UI.week)) t.weeks.push(UI.week); }
   else setWhen(t, d);
   saveTask(t); render();
 }
@@ -1139,6 +1144,11 @@ function restoreScroll(saved, sameView){
 let lastRenderedView = null;
 function render(){
   if (!ready && UI.view !== 'add') return;
+  if (M.meta){
+    const ws = weekStart();
+    if (UI.ws !== ws){ UI.week = curWeek(); UI.ws = ws; }   // first load, or the week start changed (here or on another device)
+    else UI.week = normW(UI.week) || curWeek();
+  }
   const scrollSaved = saveScroll(), viewKey = UI.view + '|' + (UI.proj || '') + '|' + (UI.cat || '') + '|' + (UI.open || '');
   document.body.classList.toggle('v-add', UI.view === 'add');
   document.body.classList.toggle('v-board', UI.view === 'board');
@@ -1252,13 +1262,14 @@ function quickAdd(whenOptions){
 }
 
 function renderWeek(){
+  UI.week = normW(UI.week) || curWeek();
   const W = UI.week, cw = curWeek(), td = today();
   const isCur = W === cw, isPast = W < cw;
   const all = tasks().filter(mine);
 
   // Week list: open tasks whose effective week is W, plus done tasks that were planned for W
-  const planned = all.filter(t => isOpen(t) ? effWeek(t) === W : (t.weeks||[]).includes(W) && t.doneDate && weekOf(t.doneDate) === W);
-  const carried = isPast ? all.filter(t => (t.weeks||[]).includes(W) && !(t.doneDate && weekOf(t.doneDate) === W)) : [];
+  const planned = all.filter(t => isOpen(t) ? effWeek(t) === W : hasWeek(t, W) && t.doneDate && weekOf(t.doneDate) === W);
+  const carried = isPast ? all.filter(t => hasWeek(t, W) && !(t.doneDate && weekOf(t.doneDate) === W)) : [];
   const doneW = all.filter(t => t.status === 'done' && t.doneDate && weekOf(t.doneDate) === W);
   const stepsW = isPast ? [] : allSteps().filter(({t,c}) => mine(t) && !c.done && sWeek(c) === W && !(isOpen(t) && effWeek(t) === W));
   const stepsDoneW = allSteps().filter(({t,c}) => mine(t) && c.done && c.doneDate && weekOf(c.doneDate) === W);
@@ -1268,7 +1279,7 @@ function renderWeek(){
   if (!isPast){
     if (isCur) whenOpts += `<option value="today" ${UI.lastWhen==='today'?'selected':''}>Today</option>`;
     whenOpts += `<option value="week" ${UI.lastWhen==='week'?'selected':''}>${isCur?'This week':'That week'}, no day</option>`;
-    for (let i=0;i<7;i++){ const d = addDays(W,i); if (d > td || !isCur) whenOpts += `<option value="${d}">${DOW[i]} ${short(d)}</option>`; }
+    for (let i=0;i<7;i++){ const d = addDays(W,i); if (d > td || !isCur) whenOpts += `<option value="${d}">${dayName(d)} ${short(d)}</option>`; }
   }
 
   let h = `<div class="weekv"><div class="o-head"><div class="head">
@@ -1327,7 +1338,7 @@ function renderWeek(){
     sortTasks(items);
     const dSteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === d : (isOpen(t) && sDay(c) === d)));
     const cls = d === td ? 'today' : d < td ? 'past' : '';
-    h += `<div class="day ${cls} ${items.length||dSteps.length?'':'noitems'}" ${d >= td ? `data-drop="${d}"` : ''}><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${DOW[i]}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}</div><div class="day-list">`;
+    h += `<div class="day ${cls} ${items.length||dSteps.length?'':'noitems'}" ${d >= td ? `data-drop="${d}"` : ''}><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${dayName(d)}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}</div><div class="day-list">`;
     if (!items.length && !dSteps.length) h += `<div class="day-empty">${d < td ? '' : 'Drop a task here'}</div>`;
     h += dSteps.map(({t,c}) => `<div class="ditem ${c.done?'is-done':''}" ${c.done ? '' : `draggable="true" data-drag-step="${t.id}|${c.id}"`}>
       <button class="sq ${c.done?'done':''}" data-act="step-toggle" data-id="${t.id}" data-s="${c.id}" aria-label="Toggle step">${c.done?'✓':''}</button>
@@ -1348,7 +1359,7 @@ function renderWeek(){
   h += `</div></div>`;
 
   // Notes
-  const wk = M.weeks.get('w-' + W);
+  const wk = weekNote(W);
   h += `<div class="sec o-notes"><div class="sec-h"><h2>Week notes</h2><span class="n">meetings, small wins, anything that wasn’t a task</span></div>
     <textarea class="notes" id="wk-notes" data-wk="${W}" placeholder="Notes">${esc(wk?.note || '')}</textarea></div></div>`;
   return h;
@@ -1630,8 +1641,10 @@ function deadlineSettings(){
   const a = calAlerts(), n = tasks().filter(t => isOpen(t) && effDue(t) && (a.people || mine(t))).length;
   const ck = (k, l) => `<label class="ck"><input type="checkbox" data-set="${k}" ${a[k]?'checked':''}> ${l}</label>`;
   return `<div class="card" style="padding:16px 18px;max-width:640px;margin-top:14px">
-      <div class="sec-h" style="margin:0 0 10px"><h2>Deadlines &amp; calendar</h2><span class="n">synced to all your devices</span></div>
+      <div class="sec-h" style="margin:0 0 10px"><h2>Weeks, deadlines &amp; calendar</h2><span class="n">synced to all your devices</span></div>
       <div class="grid2">
+        <label class="fld"><span class="lbl">Weeks start on</span><select data-set="weekStart"><option value="0" ${weekStart()===0?'selected':''}>Sunday</option><option value="1" ${weekStart()===1?'selected':''}>Monday</option></select></label>
+        <div class="fld" style="font-size:12px;color:var(--muted);align-self:end">Unfinished tasks move to the new week when it starts.</div>
         <label class="fld"><span class="lbl">Start showing deadlines (days before)</span><input type="number" inputmode="numeric" min="0" max="365" step="1" list="lead-presets" data-set="leadDays" value="${defLead()}"></label>
         <label class="fld"><span class="lbl">Calendar alert time</span><input type="time" data-set="calTime" value="${esc(M.meta.calTime || '09:00')}"></label>
       </div>
@@ -1702,17 +1715,22 @@ function renderWaiting(){
   return h + `</div>`;
 }
 
+function weekNote(W){
+  let n = M.weeks.get('w-' + W); if (n) return n;
+  for (const w of M.weeks.values()) if (w.kind === 'week' && normW(w.id.slice(2)) === W) return w;
+  return null;
+}
 function renderLog(){
   const all = tasks();
   const keys = new Set([curWeek()]);
   all.forEach(t => { if (t.doneDate) keys.add(weekOf(t.doneDate)); stepsOf(t).forEach(c => { if (c.doneDate) keys.add(weekOf(c.doneDate)); }); });
-  M.weeks.forEach(w => { if (w.note && w.kind === 'week') keys.add(w.id.slice(2)); });
+  M.weeks.forEach(w => { if (w.note && w.kind === 'week') keys.add(normW(w.id.slice(2))); });
   const sorted = [...keys].filter(k => k <= curWeek()).sort().reverse();
   let h = `<div class="head"><h1>Weekly log</h1><span class="spacer"></span><button class="btn" data-act="backup">Back up everything (.json)</button></div><div class="sub">A record of what got done each week. Open a week to see its full plan.</div>`;
   for (const k of sorted){
     const done = all.filter(t => t.status === 'done' && t.doneDate && weekOf(t.doneDate) === k);
     const sdone = allSteps().filter(({c}) => c.done && c.doneDate && weekOf(c.doneDate) === k);
-    const note = M.weeks.get('w-' + k)?.note || '';
+    const note = weekNote(k)?.note || '';
     const counts = groupByCat(done).map(g => `<span class="chip proj"><i style="background:${g.cat.color}"></i>${esc(g.cat.name)} ${g.items.length}</span>`).join(' ');
     h += `<div class="card wk"><div class="wk-h" data-act="goto-week" data-w="${k}"><b>${weekLabel(k)}</b>${k===curWeek()?'<span class="chip">this week</span>':''}<span class="spacer"></span>${counts}<span class="chip mono">${done.length} done</span></div>
       ${note ? `<div class="wk-note">${esc(note.length > 400 ? note.slice(0,400) + '…' : note)}</div>` : ''}
@@ -1925,7 +1943,7 @@ document.addEventListener('click', e => {
     case 'bd-mode': UI.boardMode = el.dataset.m; lsSet('lt_boardmode', UI.boardMode); break;
     case 'bd-cat': UI.boardCat = id || ''; break;
     case 'pick': planDay(id, UI.day); return;
-    case 'unplan': { const t = M.tasks.get(id); if (t){ t.day = ''; t.time = ''; if (!t.week || t.week < curWeek()) t.week = weekOf(UI.day); if (!t.weeks.includes(t.week)) t.weeks.push(t.week); saveTask(t); } break; }
+    case 'unplan': { const t = M.tasks.get(id); if (t){ t.day = ''; t.time = ''; if (!t.week || normW(t.week) < curWeek()) t.week = weekOf(UI.day); if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week); saveTask(t); } break; }
     case 'pick-toggle': UI.openPick.has(id) ? UI.openPick.delete(id) : UI.openPick.add(id); break;
     case 'day-prev': UI.day = addDays(UI.day, -1); break;
     case 'day-next': UI.day = addDays(UI.day, 1); break;
@@ -2059,6 +2077,7 @@ document.addEventListener('change', e => {
     if (!M.meta) return;
     const k = el.dataset.set;
     if (k === 'leadDays') M.meta.leadDays = leadNum(el.value) ?? 30;
+    else if (k === 'weekStart'){ M.meta.weekStart = +el.value === 1 ? 1 : 0; UI.week = curWeek(); }
     else if (k === 'calTime') M.meta.calTime = el.value || '09:00';
     else M.meta.calAlerts = { ...calAlerts(), [k]: el.checked };
     saveMeta(); render(); return;
@@ -2109,7 +2128,7 @@ document.addEventListener('input', e => {
     const W = e.target.dataset.wk, val = e.target.value;
     clearTimeout(noteTimer);
     noteTimer = setTimeout(() => {
-      const w = M.weeks.get('w-' + W) || { kind:'week', id:'w-' + W, note:'' };
+      const w = weekNote(W) || { kind:'week', id:'w-' + W, note:'' };
       if (w.note !== val){ w.note = val; saveWeek(w); }
     }, 900);
   }
@@ -2373,7 +2392,7 @@ async function exportWeek(){
   md += `\n## Still open\n`;
   for (const g of groupByCat(open.filter(t => t.status !== 'waiting'))){ md += `\n### ${g.cat.name}\n` + g.items.map(t => `- ${t.title}`).join('\n') + '\n'; }
   if (waiting.length) md += `\n## Waiting on others\n` + waiting.map(t => `- ${t.title}${t.waitingOn ? ', waiting on ' + t.waitingOn : ''}`).join('\n') + '\n';
-  const note = M.weeks.get('w-' + W)?.note; if (note) md += `\n## Notes\n\n${note}\n`;
+  const note = weekNote(W)?.note; if (note) md += `\n## Notes\n\n${note}\n`;
   downloadFile(`week-${W}.md`, md, 'text/markdown');
 }
 
