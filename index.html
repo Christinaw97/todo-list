@@ -325,6 +325,10 @@ textarea.notes:focus{border-color:var(--accent)}
 .pk-proj .g{font-weight:400;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .grp-h.late{color:var(--danger)}
 .dg-tasks{padding-left:22px;border-left:2px solid var(--line2);margin-left:22px}
+.st-hist{font-size:12px;color:var(--muted);margin-top:6px}
+.st-hist details{margin-top:2px}
+.st-hist summary{cursor:pointer;color:var(--accent);font-size:11.5px;width:max-content}
+.st-hist details div{font-family:var(--mono);font-size:11px;color:var(--faint);padding-left:4px}
 .pk-more{display:block;border:0;background:none;color:var(--accent);font-size:12px;padding:4px 14px 6px 29px}
 .pk-goal{padding:4px 14px 0 29px;font-size:11.5px;color:var(--muted)}
 .pk-goal.cur{color:var(--accent);font-weight:600}
@@ -575,7 +579,7 @@ const LEAD_PRESETS = [1,2,3,5,7,10,14,21,30,45,60,90,120,180];
 const LEAD_NAMES = { 7:'1 week', 14:'2 weeks', 21:'3 weeks', 28:'4 weeks', 30:'1 month', 60:'2 months', 90:'3 months', 120:'4 months', 180:'6 months', 365:'1 year' };
 const leadLabel = n => n === 0 ? 'the same day' : n === 1 ? '1 day' : LEAD_NAMES[n] || n + ' days';
 const leadNum = v => { if (v === '' || v == null) return null; const n = Math.round(+v); return Number.isFinite(n) ? Math.max(0, Math.min(365, n)) : null; };
-const defLead = () => leadNum(M.meta?.leadDays) ?? 30;
+const defLead = () => leadNum(M.meta?.leadDays) ?? 1;
 const leadOf = t => leadNum(t.lead) ?? defLead();
 // Who: '' means me; otherwise the person doing it (a student or collaborator)
 // A goal can be assigned to someone; its tasks are theirs unless the task says otherwise ('me' keeps it mine)
@@ -602,7 +606,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v23';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v24';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -824,12 +828,32 @@ function setWhen(t, when){
   else { t.day = when === 'today' ? today() : when; t.week = weekOf(t.day); }
   if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week);
 }
+const STATUS_NAME = { todo:'To do', doing:'Doing', waiting:'Waiting', done:'Done' };
+// The next day you planned to act on a task (its planned day, or its earliest planned open step), if it's after today
+function nextActionDay(t){
+  const td = today(), days = [];
+  if (t.day && t.day > td) days.push(t.day);
+  for (const c of stepsOf(t)) if (!c.done && c.day && c.day > td) days.push(c.day);
+  return days.sort()[0] || '';
+}
+// When to follow up after handing something off: your next planned action, else in 3 days, but before the deadline
+function defaultPingDay(t){
+  const na = nextActionDay(t); if (na) return na;
+  const td = today(); let d = addDays(td, 3);
+  const dd = effDue(t);
+  if (dd && dd > td){ const before = addDays(dd, -1); if (before < d) d = before; }
+  return d;
+}
+function logStatus(t, from, to){ t.statusLog = [...(t.statusLog || []), { from: from || '', to, d: today() }].slice(-20); }
+const statusSince = t => { const l = t.statusLog || []; for (let i = l.length - 1; i >= 0; i--) if (l[i].to === t.status) return l[i]; return null; };
 function setStatus(t, s){
   if (s === t.status) return;
+  const from = t.status;
   t.status = s;
   if (s === 'done') t.doneDate = today();
   else t.doneDate = '';
-  if (s === 'waiting' && !t.pingBy) t.pingBy = addDays(today(), 3);
+  if (s === 'waiting') t.pingBy = defaultPingDay(t);
+  logStatus(t, from, s);
   saveTask(t);
 }
 function toggleDone(id){
@@ -1007,9 +1031,11 @@ function addParsed(line, fbTarget, fbWhen, extra0, strict){
   if (p.due) extra.due = p.due;
   if (p.who) extra.who = p.who;
   if (p.time) extra.time = p.time;
-  if (p.waitingOn){ extra.status = 'waiting'; extra.waitingOn = p.waitingOn; extra.pingBy = addDays(today(), 3); }
+  if (p.waitingOn){ extra.status = 'waiting'; extra.waitingOn = p.waitingOn; }
   const when = p.when || fbWhen;
-  return newTask(p.title, p.target || fbTarget, when === 'none' ? '' : when, extra);
+  const t = newTask(p.title, p.target || fbTarget, when === 'none' ? '' : when, extra);
+  if (t.status === 'waiting'){ t.pingBy = defaultPingDay(t); logStatus(t, '', 'waiting'); saveTask(t); }
+  return t;
 }
 
 /* ============ Rendering helpers ============ */
@@ -1027,7 +1053,8 @@ function chipsFor(t, ctx){
   if (t.status === 'doing') out.push(`<span class="chip doing">Doing</span>`);
   if (t.status === 'waiting'){
     const late = pingDue(t);
-    out.push(`<span class="chip wait">Waiting${t.waitingOn ? ' on ' + esc(t.waitingOn) : ''}</span>`);
+    const since = statusSince(t);
+    out.push(`<span class="chip wait">Waiting${t.waitingOn ? ' on ' + esc(t.waitingOn) : ''}${since ? ' · since ' + (since.d === today() ? 'today' : short(since.d)) : ''}</span>`);
     if (t.pingBy) out.push(`<span class="chip mono ${late?'late':''}">ping ${rel(t.pingBy)}${t.pingCount ? ' (×'+t.pingCount+')' : ''}</span>`);
   }
   if (effDue(t) && t.status !== 'done'){
@@ -2033,7 +2060,9 @@ function renderDrawer(){
       <button class="icon-btn" data-act="close" aria-label="Close">✕</button></div>
     <div class="dr-b">
       <textarea class="dr-title" id="d-title" rows="1" data-field="title">${esc(t.title)}</textarea>
-      <div><span class="lbl">Status</span><div class="seg">${S.map(([k,l,c]) => `<button class="${t.status===k?'on '+c:''}" data-act="status" data-s="${k}" data-id="${t.id}">${l}</button>`).join('')}</div></div>
+      <div><span class="lbl">Status</span><div class="seg">${S.map(([k,l,c]) => `<button class="${t.status===k?'on '+c:''}" data-act="status" data-s="${k}" data-id="${t.id}">${l}</button>`).join('')}</div>
+        ${(() => { const l = t.statusLog || []; if (!l.length) return ''; const cur = statusSince(t);
+          return `<div class="st-hist">${cur ? `${STATUS_NAME[t.status]} since ${cur.d === today() ? 'today' : short(cur.d)}${cur.from ? ` (was ${STATUS_NAME[cur.from] || cur.from})` : ''}` : ''}${l.length > 1 ? `<details><summary>History</summary>${l.slice().reverse().map(x => `<div>${short(x.d)}: ${x.from ? esc(STATUS_NAME[x.from] || x.from) + ' → ' : ''}${esc(STATUS_NAME[x.to] || x.to)}</div>`).join('')}</details>` : ''}</div>`; })()}</div>
       ${t.status === 'waiting' ? `<div class="wbox">
         <div class="grid2">
           <label class="fld"><span class="lbl">Waiting on</span><input id="d-who" value="${esc(t.waitingOn)}" placeholder="Name" data-field="waitingOn"></label>
@@ -2257,7 +2286,7 @@ document.addEventListener('change', e => {
   if (el.dataset.set){
     if (!M.meta) return;
     const k = el.dataset.set;
-    if (k === 'leadDays') M.meta.leadDays = leadNum(el.value) ?? 30;
+    if (k === 'leadDays') M.meta.leadDays = leadNum(el.value) ?? 1;
     else if (k === 'weekStart'){ M.meta.weekStart = +el.value === 1 ? 1 : 0; UI.week = curWeek(); }
     else if (k === 'calTime') M.meta.calTime = el.value || '09:00';
     else M.meta.calAlerts = { ...calAlerts(), [k]: el.checked };
