@@ -161,6 +161,9 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .chip.wait{color:var(--wait);border-color:var(--wait-line);background:var(--wait-bg)}
 .chip.late{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent);background:var(--danger-soft)}
 .chip.soon{color:var(--wait)}
+.chip.ahead{color:var(--doing)}
+.set-row{display:flex;gap:14px 18px;flex-wrap:wrap;margin-top:10px}
+.set-row label.ck{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text)}
 .chip.roll{color:var(--wait);border-style:dashed}
 .chip.carry{border-style:dashed}
 .t-quick{display:flex;gap:4px;opacity:0;flex-shrink:0}
@@ -416,7 +419,7 @@ body.v-board #view{max-width:none}
   .ditem .chk{width:18px;height:18px}
   .ditem{font-size:14px;padding:6px 10px}
   .weekv{display:flex;flex-direction:column}
-  .weekv .o-head{order:0}.weekv .o-fu{order:1}.weekv .o-qa{order:2}.weekv .o-days{order:3}.weekv .o-list{order:4}.weekv .o-acc{order:5}.weekv .o-notes{order:6}
+  .weekv .o-head{order:0}.weekv .o-fu{order:1}.weekv .o-due{order:1}.weekv .o-qa{order:2}.weekv .o-days{order:3}.weekv .o-list{order:4}.weekv .o-acc{order:5}.weekv .o-notes{order:6}
   .day.past.noitems{display:none}
   .day{min-height:0}
   #fab{display:grid;place-items:center}
@@ -510,6 +513,23 @@ function allSteps(){ const out = []; for (const t of M.tasks.values()) for (cons
 function findStep(tid, sid){ const t = M.tasks.get(tid); const c = t && stepsOf(t).find(x => x.id === sid); return c ? { t, c } : null; }
 const pingDue = t => t.status === 'waiting' && t.pingBy && t.pingBy <= today();
 const isOpen = t => t.status !== 'done';
+
+/* Deadlines: when a deadline starts showing up, and calendar alerts */
+const LEAD_OPTS = [[7,'1 week'],[14,'2 weeks'],[30,'1 month'],[60,'2 months'],[90,'3 months'],[180,'6 months']];
+const leadLabel = n => (LEAD_OPTS.find(o => o[0] === n) || [n, n + ' days'])[1];
+const defLead = () => +(M.meta?.leadDays) || 30;
+const leadOf = t => +(t.lead) || defLead();
+const showFrom = t => t.due ? addDays(t.due, -leadOf(t)) : '';
+const surfaced = (t, D) => isOpen(t) && !!t.due && (D || today()) >= showFrom(t);
+const calAlerts = () => ({ start:true, week:true, day:true, on:false, ...(M.meta?.calAlerts || {}) });
+function dueIn(d){
+  const n = dayDiff(today(), d);
+  if (n < 0) return 'overdue ' + (-n) + (n === -1 ? ' day' : ' days');
+  if (n === 0) return 'today'; if (n === 1) return 'tomorrow';
+  if (n < 14) return 'in ' + n + ' days';
+  if (n < 60) return 'in ' + Math.round(n/7) + ' wk';
+  return 'in ' + Math.round(n/30.4) + ' mo';
+}
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
@@ -911,7 +931,7 @@ function chipsFor(t, ctx){
   }
   if (t.due && t.status !== 'done'){
     const n = dayDiff(today(), t.due);
-    out.push(`<span class="chip mono ${n<0?'late':n<=2?'soon':''}">due ${rel(t.due)}</span>`);
+    out.push(`<span class="chip mono ${n<0?'late':n<=2?'soon':n<=7?'ahead':''}">due ${rel(t.due)}${n > 6 || n < 0 ? ' · ' + dueIn(t.due) : ''}</span>`);
   }
   if (ctx !== 'week' && ctx !== 'today' && ctx !== 'pick' && t.status !== 'done'){
     const d = effDay(t), w = effWeek(t);
@@ -1190,6 +1210,7 @@ function renderWeek(){
   }
 
   if (!isPast) h += `<div class="o-qa" style="margin-top:16px">${quickAdd(whenOpts)}</div>`;
+  if (!isPast){ const asOf = isCur ? td : addDays(W, 6); h += deadlinesSec(all.filter(t => surfaced(t, asOf) && effWeek(t) !== W), 'o-due'); }
 
   // Week list
   h += `<div class="sec o-list"><div class="sec-h"><h2>${isPast ? 'Planned' : 'To do this week'}</h2><span class="n">${planned.length + stepsW.length + (isPast?carried.filter(t=>!planned.includes(t)).length:0)}</span><span class="spacer"></span></div>
@@ -1302,6 +1323,7 @@ function renderToday(){
     if (doneP.length || flatDone.length) left += `<div class="grp"><div class="grp-h">Done<span class="n">${doneP.length + flatDone.length}</span></div>${doneP.map(t => taskRow(t,'today')).join('')}${flatDone.map(({t,c}) => stepRow(t, c, true, 'today')).join('')}</div>`;
   }
   left += `</div></div>`;
+  if (!isPast) left += deadlinesSec(all.filter(t => surfaced(t, D) && effDay(t) !== D));
   const dn = M.weeks.get('d-' + D);
   left += `<div class="sec"><div class="sec-h"><h2>Notes for the day</h2><span class="n">time blocks, reminders, how it went</span></div>
     <textarea class="notes" id="day-notes" data-day="${D}" placeholder="2–4 in the lab&#10;after 5: answer emails&#10;remember to bring the adapters">${esc(dn?.note || '')}</textarea></div>`;
@@ -1310,6 +1332,12 @@ function renderToday(){
   return h + `<div class="today-grid"><div>${left}</div><div class="picker">${renderPicker(D)}</div></div>`;
 }
 
+function deadlinesSec(list, cls){
+  if (!list.length) return '';
+  list.sort((a,b) => a.due < b.due ? -1 : a.due > b.due ? 1 : 0);
+  return `<div class="sec ${cls||''}"><div class="sec-h"><h2>Deadlines coming up</h2><span class="n">${list.length}</span><span class="spacer"></span><span class="n">${esc(leadLabel(defLead()))} ahead</span></div>
+    <div class="card">${list.map(t => taskRowOnly(t, 'due')).join('')}</div></div>`;
+}
 function renderPicker(D){
   const isToday = D === today(), label = isToday ? 'Today' : DOW[(parse(D).getDay()+6)%7];
   const q = UI.pickQ.trim().toLowerCase();
@@ -1322,9 +1350,9 @@ function renderPicker(D){
   let h = `<div class="sec-h" style="margin-top:0"><h2>Pick for ${isToday ? 'today' : label}</h2><span class="n">from your projects and goals</span></div>
     <div class="card"><input class="pk-search" id="pick-q" placeholder="Search tasks, projects, goals…" value="${esc(UI.pickQ)}" autocomplete="off">`;
 
-  const attn = cand.filter(t => match(t) && (pingDue(t) || (t.due && t.due <= addDays(D, 2))));
+  const attn = cand.filter(t => match(t) && pingDue(t));
   attn.forEach(t => used.add(t.id));
-  if (attn.length) h += `<div class="pk-sec"><div class="pk-h">Due soon or needs a ping<span class="n">${attn.length}</span></div>${sortTasks(attn).map(t => row(t, true)).join('')}</div>`;
+  if (attn.length) h += `<div class="pk-sec"><div class="pk-h">Needs a ping<span class="n">${attn.length}</span></div>${sortTasks(attn).map(t => row(t, true)).join('')}</div>`;
 
   const wk = cand.filter(t => match(t) && !used.has(t.id) && effWeek(t) === weekOf(D));
   wk.forEach(t => used.add(t.id));
@@ -1473,6 +1501,7 @@ function renderSync(){
       </div>
       <div class="hint">The token is stored only in this browser (or this home-screen app). Each device needs it pasted once. If a device is lost, delete the token on GitHub and make a new one.</div>
     </div>
+    ${M.meta ? deadlineSettings() : ''}
     <div class="card" style="padding:16px 18px;max-width:640px;margin-top:14px">
       <div class="sec-h" style="margin:0 0 10px"><h2>Backup</h2></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1484,6 +1513,53 @@ function renderSync(){
     <input type="file" id="import-file" accept=".json,application/json" style="display:none">`;
 }
 
+function deadlineSettings(){
+  const a = calAlerts(), n = tasks().filter(t => isOpen(t) && t.due).length;
+  const ck = (k, l) => `<label class="ck"><input type="checkbox" data-set="${k}" ${a[k]?'checked':''}> ${l}</label>`;
+  return `<div class="card" style="padding:16px 18px;max-width:640px;margin-top:14px">
+      <div class="sec-h" style="margin:0 0 10px"><h2>Deadlines &amp; calendar</h2><span class="n">synced to all your devices</span></div>
+      <div class="grid2">
+        <label class="fld"><span class="lbl">Start showing deadlines</span><select data-set="leadDays">${LEAD_OPTS.map(([d,l]) => `<option value="${d}" ${defLead()===d?'selected':''}>${l} before</option>`).join('')}</select></label>
+        <label class="fld"><span class="lbl">Calendar alert time</span><input type="time" data-set="calTime" value="${esc(M.meta.calTime || '09:00')}"></label>
+      </div>
+      <div class="lbl" style="margin-top:12px">Calendar alerts</div>
+      <div class="set-row">${ck('start','When it starts showing')}${ck('week','1 week before')}${ck('day','1 day before')}${ck('on','On the day')}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn pri" data-act="cal-all">Download calendar (.ics)</button><span class="meta" style="align-self:center;font-size:12px;color:var(--muted)">${n} open ${n === 1 ? 'task has' : 'tasks have'} a deadline</span></div>
+      <div class="hint">Each task can override when it starts showing, in its own Deadline settings. The calendar file adds every open deadline as an all-day event with these alerts; open it and your Calendar app will remind you even when this app is closed. It’s a snapshot, so download it again after adding or moving deadlines. Events keep the same IDs, but some calendar apps still add a second copy, so importing into a separate calendar (for example “Todo deadlines”) makes it easy to clear and re-import. On iPhone, do this from Safari rather than the home-screen app.</div>
+    </div>`;
+}
+function icsEsc(s){ return String(s ?? '').replace(/\\/g,'\\\\').replace(/\r?\n/g,'\\n').replace(/([,;])/g,'\\$1'); }
+function icsFold(line){
+  const enc = new TextEncoder(), out = []; let cur = '', len = 0;
+  for (const ch of line){ const b = enc.encode(ch).length; if (len + b > 74){ out.push(cur); cur = ' '; len = 1; } cur += ch; len += b; }
+  out.push(cur); return out.join('\r\n');
+}
+function buildIcs(list){
+  const a = calAlerts(), [hh, mm] = (M.meta?.calTime || '09:00').split(':').map(Number), mins = (hh||0)*60 + (mm||0);
+  const stampNow = new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
+  const url = location.origin + location.pathname;
+  const L = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Todo List//Deadlines//EN','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-CALNAME:Todo deadlines'];
+  const say = n => n === 0 ? 'Due today' : n === 1 ? 'Due tomorrow' : 'Due in ' + leadLabel(n);
+  for (const t of list){
+    L.push('BEGIN:VEVENT', 'UID:' + t.id + '@todo-list', 'DTSTAMP:' + stampNow,
+      'DTSTART;VALUE=DATE:' + t.due.replace(/-/g,''), 'DTEND;VALUE=DATE:' + addDays(t.due, 1).replace(/-/g,''),
+      'SUMMARY:' + icsEsc('Due: ' + t.title), 'DESCRIPTION:' + icsEsc(projLabel(t) + '\n' + url), 'URL:' + url, 'TRANSP:TRANSPARENT');
+    const days = new Set();
+    if (a.start) days.add(leadOf(t)); if (a.week) days.add(7); if (a.day) days.add(1); if (a.on) days.add(0);
+    for (const n of [...days].sort((x,y) => y - x)){
+      const off = n * 1440 - mins;
+      L.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(say(n) + ': ' + t.title), 'TRIGGER:' + (off > 0 ? '-PT' + off + 'M' : 'PT' + (-off) + 'M'), 'END:VALARM');
+    }
+    L.push('END:VEVENT');
+  }
+  L.push('END:VCALENDAR');
+  return L.map(icsFold).join('\r\n') + '\r\n';
+}
+function calExport(){
+  const list = tasks().filter(t => isOpen(t) && t.due);
+  if (!list.length){ showNote('No open tasks have a deadline yet. Set one in a task’s Deadline field.'); return; }
+  downloadFile('todo-deadlines.ics', buildIcs(list), 'text/calendar');
+}
 function renderAdd(){
   const recent = UI.recent.map(id => M.tasks.get(id)).filter(Boolean);
   return `<div class="cap">
@@ -1664,6 +1740,8 @@ function renderDrawer(){
         <label class="fld"><span class="lbl">Project</span><select id="d-target" data-field="target">${targetOptions(target)}</select></label>
         ${msList(projById(t.project)).length ? `<label class="fld" style="grid-column:1/-1"><span class="lbl">Goal</span><select id="d-ms" data-field="milestone"><option value="">No goal</option>${msList(projById(t.project)).map(m => `<option value="${m.id}" ${t.milestone===m.id?'selected':''}>${m.done?'✓ ':'⚑ '}${esc(m.name)}</option>`).join('')}</select></label>` : ''}
         <label class="fld"><span class="lbl">Deadline</span><input type="date" id="d-due" value="${t.due}" data-field="due"></label>
+        ${t.due ? `<label class="fld"><span class="lbl">Start showing &amp; reminding</span><select id="d-lead" data-field="lead"><option value="">Default (${esc(leadLabel(defLead()))} before)</option>${LEAD_OPTS.map(([n,l]) => `<option value="${n}" ${+t.lead===n?'selected':''}>${l} before</option>`).join('')}</select></label>
+        <div class="fld" style="grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="meta" style="font-size:12px;color:var(--muted)">${t.status==='done' ? '' : surfaced(t) ? 'Showing in “Deadlines coming up” now.' : 'Shows up in “Deadlines coming up” from ' + short(showFrom(t)) + '.'}</span><button class="btn" data-act="cal-one" data-id="${t.id}">Add to calendar (.ics)</button></div>` : ''}
         <label class="fld"><span class="lbl">Planned day</span><input type="date" id="d-day" value="${t.status==='done' ? (t.day||'') : effDay(t)}" data-field="day"></label>
         <label class="fld"><span class="lbl">On the week list</span><select id="d-week" data-field="week">
           <option value="">Not planned</option>
@@ -1749,6 +1827,8 @@ document.addEventListener('click', e => {
     case 'goto-week': UI.view = 'week'; UI.week = el.dataset.w; document.getElementById('scroll').scrollTop = 0; break;
     case 'toggle-done': UI.showDone = !UI.showDone; break;
     case 'export': exportWeek(); return;
+    case 'cal-all': calExport(); return;
+    case 'cal-one': { const t = M.tasks.get(id); if (t && t.due) downloadFile('deadline-' + (t.title.replace(/[^\w]+/g,'-').replace(/^-|-$/g,'').slice(0,40) || 'task') + '.ics', buildIcs([t]), 'text/calendar'); return; }
     case 'cl-toggle': { const t = M.tasks.get(UI.open); if (t){ const c = t.checklist[+el.dataset.i]; c.done = !c.done; c.doneDate = c.done ? today() : ''; saveTask(t); } break; }
     case 'step-toggle': { const x = findStep(id, el.dataset.s); if (x){ x.c.done = !x.c.done; x.c.doneDate = x.c.done ? today() : ''; saveTask(x.t); } break; }
     case 'step-day': {
@@ -1832,6 +1912,14 @@ document.addEventListener('change', e => {
   if (el.id === 'time-edit'){ saveTimeEdit(el); return; }
   if (el.id === 'qa-target'){ UI.lastProj = el.value; lsSet('lt_lastproj', el.value); return; }
   if (el.id === 'qa-when'){ UI.lastWhen = el.value; return; }
+  if (el.dataset.set){
+    if (!M.meta) return;
+    const k = el.dataset.set;
+    if (k === 'leadDays') M.meta.leadDays = +el.value || 30;
+    else if (k === 'calTime') M.meta.calTime = el.value || '09:00';
+    else M.meta.calAlerts = { ...calAlerts(), [k]: el.checked };
+    saveMeta(); render(); return;
+  }
   if (el.dataset.ren){
     const v = el.value.trim(); if (!v) { render(); return; }
     const o = el.dataset.ren === 'cat' ? catById(el.dataset.id) : el.dataset.ren === 'ms' ? msList(projById(UI.proj)).find(m => m.id === el.dataset.id) : projById(el.dataset.id);
@@ -1849,6 +1937,7 @@ document.addEventListener('change', e => {
   if (f === 'title'){ const v = el.value.trim(); if (v && v !== t.title){ t.title = v; saveTask(t); } }
   else if (f === 'target'){ const v = el.value; if (v.startsWith('p:')){ t.project = v.slice(2); t.cat = projById(t.project)?.cat || ''; } else { t.project = ''; t.cat = v.slice(2); } if (!msById(t)) t.milestone = ''; saveTask(t); }
   else if (f === 'milestone'){ t.milestone = el.value; saveTask(t); }
+  else if (f === 'lead'){ t.lead = el.value ? +el.value : ''; saveTask(t); }
   else if (f === 'day'){ if (el.value) setWhen(t, el.value); else { t.day = ''; } saveTask(t); }
   else if (f === 'week'){ if (el.value){ t.day = (t.day && weekOf(t.day) === el.value) ? t.day : ''; t.week = el.value; if (!t.weeks.includes(el.value)) t.weeks.push(el.value); } else { t.day=''; t.week=''; } saveTask(t); }
   else if (['waitingOn','pingBy','due','notes'].includes(f)){ const v = f==='waitingOn'||f==='notes' ? el.value.trim() : el.value; if (t[f] !== v){ t[f] = v; saveTask(t); } }
