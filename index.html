@@ -243,6 +243,8 @@ textarea.notes:focus{border-color:var(--accent)}
 .cl-item .x:hover{color:var(--danger)}
 .cl-add{width:100%;border:1px dashed var(--line);border-radius:6px;padding:6px 8px;background:none;outline:none;margin-top:4px}
 .cl-add:focus{border-style:solid;border-color:var(--accent)}
+.ms-qadd{display:block;width:calc(100% - 28px);margin:6px 14px 12px;border:1px dashed var(--line);border-radius:6px;padding:7px 10px;background:none;outline:none;color:var(--text);font-size:13px}
+.ms-qadd:focus{border-style:solid;border-color:var(--accent);background:var(--panel)}
 .dr-notes{width:100%;min-height:90px;border:1px solid var(--line);border-radius:7px;padding:8px 10px;background:var(--panel);resize:vertical;outline:none}
 .dr-notes:focus{border-color:var(--accent)}
 .check-line{display:flex;align-items:center;gap:8px;font-size:13px}
@@ -1689,7 +1691,8 @@ function renderProj(){
         </span>
       </div>`;
     if (expanded){
-      h += openT.length ? statusSections(openT, 'proj') : `<div class="empty" style="padding:14px">${m.done ? 'All tasks finished.' : 'No open tasks for this goal. Add one above with this goal selected, or drag tasks here.'}</div>`;
+      h += openT.length ? statusSections(openT, 'proj') : `<div class="empty" style="padding:14px">${m.done ? 'All tasks finished.' : 'No open tasks for this goal yet. Add one below, or drag tasks here.'}</div>`;
+      if (!m.done) h += `<input class="ms-qadd" id="ms-qa-${m.id}" data-kadd="${p.id}" data-ms="${m.id}" placeholder="Add a task to this goal, then press Enter" enterkeyhint="enter" autocomplete="off" aria-label="Add a task to ${esc(m.name)}">`;
       if (doneT.length){
         const show = UI.openMs.has('d:' + m.id);
         h += `<div class="ms-foot"><button data-act="ms-showdone" data-id="${m.id}">${show ? 'Hide' : 'Show'} ${doneT.length} done</button></div>`;
@@ -1706,7 +1709,7 @@ function renderProj(){
 
   const loose = open.filter(t => !mss.some(m => m.id === t.milestone));
   h += `<div class="sec"><div class="sec-h"><h2>${mss.length ? 'Other tasks' : 'Tasks'}</h2><span class="n">${loose.length} open</span></div>
-    <div class="card" data-drop-ms="">${loose.length ? statusSections(loose, 'proj') : `<div class="empty">${mss.length ? 'Tasks not tied to a goal show here.' : 'No open tasks. Add the steps for this project above.'}</div>`}</div></div>`;
+    <div class="card" data-drop-ms="">${loose.length ? statusSections(loose, 'proj') : `<div class="empty">${mss.length ? 'Tasks not tied to a goal show here.' : 'No open tasks. Add the steps for this project above.'}</div>`}${mss.length ? `<input class="ms-qadd" id="ms-qa-none-${p.id}" data-kadd="${p.id}" placeholder="Add a task without a goal, then press Enter" enterkeyhint="enter" autocomplete="off">` : ''}</div></div>`;
   h += doneSection(list.filter(t => !mss.some(m => m.id === t.milestone)), 'proj');
   return h;
 }
