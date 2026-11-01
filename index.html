@@ -350,6 +350,13 @@ textarea.notes:focus{border-color:var(--accent)}
 .btn.focus-on{color:var(--wait);border-color:var(--wait)}
 .ms-h.focus{box-shadow:inset 3px 0 0 var(--wait)}
 .ord.handed-row,.handed-row{opacity:.72}
+.chip.block{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--accent-soft)}
+.ditem.block{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.ditem .blk{font-family:var(--mono);font-size:10px;color:var(--accent)}
+.chip.proj.link{cursor:pointer}
+.chip.proj.link:hover{color:var(--accent);border-color:var(--accent)}
+.crumb-link{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}
+.crumb-link:hover{color:var(--accent);text-decoration:underline}
 .checkon{color:var(--wait);font-weight:600}
 .pk-more{display:block;border:0;background:none;color:var(--accent);font-size:12px;padding:4px 14px 6px 29px}
 .pk-goal{padding:4px 14px 0 29px;font-size:11.5px;color:var(--muted)}
@@ -584,7 +591,12 @@ function effDay(t){
   const td = today();
   return t.day < td ? td : t.day;
 }
-const rolled = t => t.status !== 'done' && t.day && t.day < today();
+// Multi-day blocks: a task planned for t.day can be blocked off through t.dayTo
+const blockLen = t => t.day && t.dayTo && t.dayTo > t.day ? dayDiff(t.day, t.dayTo) + 1 : 1;
+function blockEnd(t){ const s = effDay(t); if (!s || t.status === 'done' || !t.dayTo || t.status === 'waiting') return s; return t.dayTo > s ? t.dayTo : s; }
+function onDay(t, d){ if (!isOpen(t)) return false; const s = effDay(t); return !!s && d >= s && d <= blockEnd(t); }
+function blockPos(t, d){ const len = blockLen(t); if (len < 2 || t.status === 'done') return null; const n = dayDiff(t.day, d) + 1; return n >= 1 && n <= len ? { n, of: len } : null; }
+const rolled = t => t.status !== 'done' && t.day && t.day < today() && !(t.dayTo && t.dayTo >= today());
 function effWeek(t){
   if (t.status === 'done') return t.doneDate ? weekOf(t.doneDate) : '';
   const d = effDay(t); if (d) return weekOf(d);
@@ -634,7 +646,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v31';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v33';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -850,10 +862,12 @@ function newTask(title, target, when, extra){
   return t;
 }
 function setWhen(t, when){
+  const len = blockLen(t);
+  if (when === 'none' || when === 'week' || when === 'nextweek') t.dayTo = '';
   if (when === 'none'){ t.day = ''; t.week = ''; return; }
   if (when === 'week'){ t.day = ''; t.week = UI.view === 'week' ? UI.week : curWeek(); }
   else if (when === 'nextweek'){ t.day = ''; t.week = addDays(curWeek(), 7); }
-  else { t.day = when === 'today' ? today() : when; t.week = weekOf(t.day); }
+  else { t.day = when === 'today' ? today() : when; t.week = weekOf(t.day); t.dayTo = len > 1 ? addDays(t.day, len - 1) : ''; }
   if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week);
 }
 const handoffLine = t => short(today()) + ': did my part, now waiting' + (t.waitingOn ? ' on ' + t.waitingOn : '') + '.';
@@ -1024,6 +1038,7 @@ function parseQuick(raw){
     } else out.when = val === td ? 'today' : val;
     return ' ';
   });
+  s = s.replace(/\s(?:for\s+)?([2-9]|1[0-4])\s+days?(?=[\s.,;:!?])/i, (m, n) => { out.blockDays = +n; return ' '; });
   { const tt = extractTime(s); if (tt.time){ out.time = tt.time; s = tt.text; } }
   s = s.replace(/\s@([A-Za-z][\w'’\-]*)/g, (m, name) => { out.who = canonPerson(name); return ' '; });
   const wm = s.match(/\s(?:waiting on|waiting for|wait for|waiting)\s+([A-Za-z][\w'’\-]*)/i);
@@ -1056,6 +1071,7 @@ function previewHTML(text, fbTarget, fbWhen, onlyIfFound){
     const w = whenName(p.when || fbWhen); if (w) bits.push(w);
     if (p.who) bits.push('for ' + p.who);
     if (p.due) bits.push('due ' + rel(p.due));
+    if (p.blockDays > 1) bits.push(p.blockDays + ' days');
     if (p.waitingOn) bits.push('waiting on ' + p.waitingOn);
     if (p.time) bits.push(p.time);
     rows.push(`<div><b>${esc(p.title)}</b> <span class="to">→ ${esc(bits.join(', '))}</span></div>`);
@@ -1075,6 +1091,7 @@ function addParsed(line, fbTarget, fbWhen, extra0, strict){
   const when = p.when || fbWhen;
   const t = newTask(p.title, p.target || fbTarget, when === 'none' ? '' : when, extra);
   if (t.status === 'waiting'){ t.pingBy = defaultPingDay(t); logStatus(t, '', 'waiting'); saveTask(t); }
+  if (p.blockDays > 1){ if (!t.day) setWhen(t, 'today'); t.dayTo = addDays(t.day, p.blockDays - 1); saveTask(t); }
   return t;
 }
 
@@ -1085,11 +1102,17 @@ function projLabel(t){
   if (p) return p.name;
   return c ? c.name : 'Inbox';
 }
+// The project tag on a task: clicking it opens the project (or the category, if the task has no project)
+function projChip(t){
+  const p = projById(t.project), c = taskCat(t);
+  const nav = p ? `data-act="nav" data-v="proj" data-id="${p.id}" title="Open ${esc(p.name)}"` : c ? `data-act="nav" data-v="cat" data-id="${c.id}" title="Open ${esc(c.name)}"` : `data-act="nav" data-v="inbox" title="Open the Inbox"`;
+  return `<span class="chip proj link" ${nav}><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>`;
+}
 function chipsFor(t, ctx){
   const out = [];
   if (t.status !== 'done' && ctx !== 'proj' && taskFocus(t)) out.push(`<span class="chip focus" title="Part of this week's priorities">★</span>`);
   if (whoOf(t) && ctx !== 'people') out.push(`<span class="chip who" title="${esc(whoOf(t))} is doing this${!t.who && goalWho(t) ? ' (assigned with the goal)' : ''}">👤 ${esc(whoOf(t))}</span>`);
-  if (ctx !== 'proj') out.push(`<span class="chip proj"><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>`);
+  if (ctx !== 'proj') out.push(projChip(t));
   if (ctx !== 'proj'){ const m = msById(t); if (m) out.push(`<span class="chip ms-chip" title="Goal: ${esc(m.name)}">⚑ ${esc(m.name)}</span>`); }
   if (t.status === 'doing') out.push(`<span class="chip doing">Doing</span>`);
   if (parked(t) && (ctx === 'today' || ctx === 'week')) out.push(`<span class="chip handed">◐ your part done</span>`);
@@ -1108,9 +1131,10 @@ function chipsFor(t, ctx){
     if (d) out.push(`<span class="chip mono">${d===today()?'today':rel(d)}</span>`);
     else if (w === curWeek()) out.push(`<span class="chip mono">this week</span>`);
   }
+  if (ctx === 'today' && blockPos(t, UI.day)){ const b = blockPos(t, UI.day); out.push(`<span class="chip mono block">▬ day ${b.n} of ${b.of}</span>`); }
   if (ctx === 'week' && t.status !== 'done'){
     const d = effDay(t);
-    if (d && weekOf(d) === UI.week) out.push(`<span class="chip mono">${DOW[(parse(d).getDay()+6)%7]}</span>`);
+    if (d && weekOf(d) === UI.week) out.push(`<span class="chip mono ${blockLen(t) > 1 ? 'block' : ''}">${DOW[(parse(d).getDay()+6)%7]}${blockLen(t) > 1 ? '–' + dayName(blockEnd(t)) : ''}</span>`);
   }
   if (rolled(t)) out.push(`<span class="chip mono roll" title="Planned for ${short(t.day)}, moved forward automatically">↻ from ${rel(t.day)}</span>`);
   if (t.checklist?.length && !['proj','today','week','cat','inbox','waiting'].includes(ctx)){
@@ -1183,7 +1207,7 @@ function taskRow(t, ctx){
 }
 function taskRowOnly(t, ctx){
   const w = UI.view === 'week' ? UI.week : curWeek();
-  const inToday = effDay(t) === today() && t.status !== 'done';
+  const inToday = onDay(t, today());
   const inWeek = effWeek(t) === w && t.status !== 'done';
   return `<div class="task ${t.status==='done'?'is-done':''}" draggable="true" data-drag="${t.id}">
     <button class="chk ${t.status} ${parked(t) ? 'handed' : ''}" data-act="done" data-id="${t.id}" aria-label="${t.status==='done'?'Mark not done':'Mark done'}" ${parked(t) ? 'title="Your part is done; waiting on someone else"' : ''}>${t.status==='done'?'✓':''}</button>
@@ -1310,7 +1334,7 @@ function renderSide(){
   const due = waiting.filter(pingDue).length;
   let h = `<div class="brand">Todo List</div>${syncPill()}
     <button class="nav ${UI.view==='add'?'on':''}" data-act="nav" data-v="add"><span class="ic">+</span>Quick add</button>
-    <button class="nav ${UI.view==='today'?'on':''}" data-act="nav" data-v="today"><span class="ic">☀</span>Today<span class="ct">${(openMine.filter(t => effDay(t) === today()).length + allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sDay(c) === today() && effDay(t) !== today()).length)||''}</span></button>
+    <button class="nav ${UI.view==='today'?'on':''}" data-act="nav" data-v="today"><span class="ic">☀</span>Today<span class="ct">${(openMine.filter(t => onDay(t, today())).length + allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sDay(c) === today() && effDay(t) !== today()).length)||''}</span></button>
     <button class="nav ${UI.view==='week'&&UI.week===curWeek()?'on':''}" data-act="nav" data-v="week"><span class="ic">◷</span>This week<span class="ct">${wk||''}</span></button>
     <button class="nav ${UI.view==='waiting'?'on':''}" data-act="nav" data-v="waiting"><span class="ic">⏳</span>Waiting on others<span class="ct ${due?'hot':''}">${due ? due+' to ping' : (waiting.length||'')}</span></button>
     <button class="nav ${UI.view==='people'?'on':''}" data-act="nav" data-v="people"><span class="ic">👤</span>People<span class="ct">${othersN||''}</span></button>
@@ -1420,7 +1444,7 @@ function renderWeek(){
 
   // Follow-ups due
   if (isCur){
-    const fu = all.filter(t => pingDue(t) && effDay(t) !== td).sort((a,b) => a.pingBy < b.pingBy ? -1 : 1);
+    const fu = all.filter(t => pingDue(t) && !onDay(t, td)).sort((a,b) => a.pingBy < b.pingBy ? -1 : 1);
     if (fu.length){
       h += `<div class="o-fu"><div class="fu"><div class="fu-h">Follow up today</div>` + fu.map(t => `<div class="fu-row">
         <span class="who">${esc(t.waitingOn || 'Someone')}</span>
@@ -1468,7 +1492,7 @@ function renderWeek(){
   h += `<div class="sec o-days"><div class="sec-h"><h2>${isPast ? 'Done by day' : 'Day by day'}</h2><span class="spacer"></span><span class="n">${isPast ? '' : 'Unfinished items move to today automatically'}</span></div><div class="days-wrap"><div class="days">`;
   for (let i=0;i<7;i++){
     const d = addDays(W,i);
-    const items0 = sortTasks(all.filter(t => isOpen(t) ? effDay(t) === d : t.doneDate === d));
+    const items0 = sortTasks(all.filter(t => isOpen(t) ? onDay(t, d) : t.doneDate === d));
     const items = [...items0.filter(t => !parked(t)), ...items0.filter(parked)];
     const dSteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === d : (isOpen(t) && sDay(c) === d)));
     const cls = d === td ? 'today' : d < td ? 'past' : '';
@@ -1478,9 +1502,9 @@ function renderWeek(){
       <button class="sq ${c.done?'done':''}" data-act="step-toggle" data-id="${t.id}" data-s="${c.id}" aria-label="Toggle step">${c.done?'✓':''}</button>
       <span class="dt" data-act="open" data-id="${t.id}">${c.time && !c.done ? `<span class="tm">${esc(c.time)}</span>` : ''}${esc(c.text)}${sRolled(c)?' <span class="r">↻</span>':''}<span class="dsub">↳ ${esc(t.title)}</span></span>
       <span class="cd" style="background:${catColor(t)}"></span></div>`).join('');
-    h += items.map(t => `<div class="ditem ${t.status==='done'?'is-done':''} ${parked(t) ? 'handed-row' : ''}" ${t.status==='done' ? '' : `draggable="true" data-drag="${t.id}"`}>
+    h += items.map(t => `<div class="ditem ${t.status==='done'?'is-done':''} ${parked(t) ? 'handed-row' : ''} ${t.status !== 'done' && blockPos(t, d) ? 'block' : ''}" ${t.status==='done' ? '' : `draggable="true" data-drag="${t.id}"`}>
       <button class="chk ${t.status} ${parked(t) ? 'handed' : ''}" data-act="done" data-id="${t.id}" aria-label="Toggle done">${t.status==='done'?'✓':''}</button>
-      <span class="dt" data-act="open" data-id="${t.id}">${t.time && isOpen(t) ? `<span class="tm">${esc(t.time)}</span>` : ''}${esc(t.title)}${t.status==='waiting'?' <span class="r">⏳</span>':''}${rolled(t)?` <span class="r" title="Moved from ${short(t.day)}">↻</span>`:''}</span>
+      <span class="dt" data-act="open" data-id="${t.id}">${t.time && isOpen(t) ? `<span class="tm">${esc(t.time)}</span>` : ''}${esc(t.title)}${t.status==='waiting'?' <span class="r">⏳</span>':''}${t.status !== 'done' && blockPos(t, d) ? ` <span class="blk">${blockPos(t, d).n}/${blockPos(t, d).of}</span>` : ''}${rolled(t)?` <span class="r" title="Moved from ${short(t.day)}">↻</span>`:''}</span>
       <span class="cd" style="background:${catColor(t)}"></span>
     </div>`).join('');
     h += `</div></div>`;
@@ -1514,7 +1538,7 @@ function accList(list, steps){
 function renderToday(){
   const td = today(), D = UI.day || td, isPast = D < td, isToday = D === td;
   const all = tasks().filter(mine);
-  const planned = all.filter(t => isOpen(t) ? effDay(t) === D : t.doneDate === D);
+  const planned = all.filter(t => isOpen(t) ? onDay(t, D) : t.doneDate === D);
   const openP = sortTasks(planned.filter(isOpen)), doneP = planned.filter(t => !isOpen(t));
   const daySteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === D : (isOpen(t) && sDay(c) === D)));
   const flatSteps = daySteps.filter(x => !openP.includes(x.t));
@@ -1537,7 +1561,7 @@ function renderToday(){
     ${totalN ? `<div class="prog"><span class="bar"><i style="width:${pct}%"></i></span>${doneN} of ${totalN} done${handedN ? `, ${handedN} handed off` : ''}</div>` : ''}`;
 
   if (isToday){
-    const fu = all.filter(t => pingDue(t) && effDay(t) !== D);
+    const fu = all.filter(t => pingDue(t) && !onDay(t, D));
     if (fu.length) h += `<div class="fu" style="margin-top:0;margin-bottom:16px"><div class="fu-h">Follow up today</div>` + fu.map(t => `<div class="fu-row">
         <span class="who">${esc(t.waitingOn || 'Someone')}</span>
         <span class="what" data-act="open" data-id="${t.id}">${esc(t.title)}</span>
@@ -1567,7 +1591,7 @@ function renderToday(){
   }
   left += `</div></div>`;
   if (!isPast) left += goalsSec(D);
-  if (!isPast) left += deadlinesSec(all.filter(t => surfaced(t, D) && effDay(t) !== D));
+  if (!isPast) left += deadlinesSec(all.filter(t => surfaced(t, D) && !onDay(t, D)));
   if (!isPast) left += peopleSec(tasks().filter(t => !mine(t) && isOpen(t) && (surfaced(t, D) || (effDay(t) && effDay(t) <= D))));
   const dn = M.weeks.get('d-' + D);
   left += `<div class="sec"><div class="sec-h"><h2>Notes for the day</h2><span class="n">time blocks, reminders, how it went</span></div>
@@ -1600,7 +1624,7 @@ function deadlinesSec(list, cls){
       if (g.length === 1){ body += taskRowOnly(t0, 'due'); continue; }
       const key = 'dg:' + r.goal, open = UI.openPick.has(key);
       body += `<div class="task goal-row"><span class="g-flag">⚑</span><div class="t-main" data-act="pick-toggle" data-id="${key}"><div class="t-title">${esc(m.name)}</div>
-        <div class="chips"><span class="chip proj"><i style="background:${catColor(t0)}"></i>${esc(p ? p.name : projLabel(t0))}</span><span class="chip mono ${n < 0 ? 'late' : n <= 2 ? 'soon' : n <= 7 ? 'ahead' : ''}">due ${rel(dd)}${n > 6 || n < 0 ? ' · ' + dueIn(dd) : ''}</span><span class="chip mono">${g.length} tasks ${open ? '▾' : '▸'}</span></div></div></div>`;
+        <div class="chips">${projChip(t0)}<span class="chip mono ${n < 0 ? 'late' : n <= 2 ? 'soon' : n <= 7 ? 'ahead' : ''}">due ${rel(dd)}${n > 6 || n < 0 ? ' · ' + dueIn(dd) : ''}</span><span class="chip mono">${g.length} tasks ${open ? '▾' : '▸'}</span></div></div></div>`;
       if (open) body += `<div class="dg-tasks">${g.map(t => taskRowOnly(t, 'due')).join('')}</div>`;
     }
     body += `</div>`;
@@ -1661,7 +1685,7 @@ function goalsSec(D, cls){
   list.sort((a, b) => (a.m.due || a.m.remind || '9999') < (b.m.due || b.m.remind || '9999') ? -1 : 1);
   return `<div class="sec ${cls||''}"><div class="sec-h"><h2>Goals</h2><span class="n">${list.length}</span></div><div class="card">${list.map(({p, m}) => {
     const st = msStats(p, m), n = m.due ? dayDiff(today(), m.due) : null;
-    const chips = [`<span class="chip proj"><i style="background:${catColor({ project: p.id })}"></i>${esc(p.name)}</span>`];
+    const chips = [projChip({ project: p.id })];
     if (m.who) chips.push(`<span class="chip who">👤 ${esc(m.who)}</span>`);
     if (m.due) chips.push(`<span class="chip mono ${n < 0 ? 'late' : n <= 2 ? 'soon' : n <= 7 ? 'ahead' : ''}">due ${rel(m.due)}${n > 6 || n < 0 ? ' · ' + dueIn(m.due) : ''}</span>`);
     if (goalCheckIn(m, D)) chips.push(`<span class="chip mono soon">check-in ${m.remind === today() ? 'today' : rel(m.remind)}</span>`);
@@ -1690,7 +1714,7 @@ function moveUnfinishedToNextWeek(){
 function renderPicker(D){
   const isToday = D === today(), label = isToday ? 'Today' : DOW[(parse(D).getDay()+6)%7];
   const q = UI.pickQ.trim().toLowerCase();
-  const cand = tasks().filter(t => mine(t) && isOpen(t) && (effDay(t) !== D || stepsOf(t).some(c => !c.done && sDay(c) !== D)) && !(effDay(t) === D));
+  const cand = tasks().filter(t => mine(t) && isOpen(t) && !onDay(t, D));
   const match = t => !q || (t.title + ' ' + projLabel(t) + ' ' + (taskCat(t)?.name || '') + ' ' + (msById(t)?.name || '')).toLowerCase().includes(q);
   const used = new Set();
   const pickSteps = t => { const ss = stepsOf(t).filter(c => !c.done && sDay(c) !== D); return ss.length ? `<div class="steps">${ss.map(c => `<div class="step"><button class="schk" data-act="step-toggle" data-id="${t.id}" data-s="${c.id}" aria-label="Mark step done"></button><div class="st-main" data-act="open" data-id="${t.id}"><span class="st-text">${esc(c.text)}</span></div><button class="q add" data-act="step-day" data-id="${t.id}" data-s="${c.id}">+ ${label}</button></div>`).join('')}</div>` : ''; };
@@ -1715,7 +1739,7 @@ function renderPicker(D){
     if (nextUp.has(t.id)){ score = Math.max(score, 45); why.push({ k:'', txt:'next in ⚑ ' + currentMs(projById(t.project)).name }); }
     return { score, why };
   };
-  const sugRow = (t, why) => `<div class="pk flat"><div class="t-main"><div class="t-title" data-act="open" data-id="${t.id}">${esc(t.title)}</div><div class="chips" data-act="open" data-id="${t.id}"><span class="chip proj"><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>${why.map(w => `<span class="chip mono ${w.k}">${esc(w.txt)}</span>`).join('')}</div>${pickSteps(t)}</div><button class="q add" data-act="pick" data-id="${t.id}">+ ${label}</button></div>`;
+  const sugRow = (t, why) => `<div class="pk flat"><div class="t-main"><div class="t-title" data-act="open" data-id="${t.id}">${esc(t.title)}</div><div class="chips" data-act="open" data-id="${t.id}">${projChip(t)}${why.map(w => `<span class="chip mono ${w.k}">${esc(w.txt)}</span>`).join('')}</div>${pickSteps(t)}</div><button class="q add" data-act="pick" data-id="${t.id}">+ ${label}</button></div>`;
   const sugg = cand.filter(match).map(t => ({ t, ...whyOf(t) })).filter(x => x.score > 0).sort((x, y) => y.score - x.score || ((effDue(x.t) || '9999') < (effDue(y.t) || '9999') ? -1 : 1));
   const wkSteps = allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sWeek(c) === weekOf(D) && sDay(c) !== D && !used.has(t.id) && (!q || (c.text + ' ' + t.title + ' ' + projLabel(t)).toLowerCase().includes(q)));
   const limit = UI.pickMore || q ? 99 : 8, shown = sugg.slice(0, limit);
@@ -1761,7 +1785,7 @@ function renderPicker(D){
 function kcard(t, showProj){
   const meta = [];
   if (whoOf(t)) meta.push(`<span class="chip who">👤 ${esc(whoOf(t))}</span>`);
-  if (showProj) meta.push(`<span class="chip proj"><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>`);
+  if (showProj) meta.push(projChip(t));
   if (t.status === 'doing') meta.push(`<span class="chip doing">Doing</span>`);
   if (t.status === 'waiting') meta.push(`<span class="chip wait">⏳ ${esc(t.waitingOn || 'Waiting')}</span>` + (t.pingBy ? `<span class="chip mono ${pingDue(t)?'late':''}">ping ${rel(t.pingBy)}</span>` : ''));
   if (effDue(t) && isOpen(t)){ const n = dayDiff(today(), effDue(t)); meta.push(`<span class="chip mono ${n<0?'late':n<=2?'soon':''}">${dueFromGoal(t) ? '⚑ ' : ''}due ${rel(effDue(t))}</span>`); }
@@ -2174,7 +2198,7 @@ function renderDrawer(){
   const target = t.project ? 'p:' + t.project : t.cat ? 'c:' + t.cat : '';
   const S = [['todo','To do',''],['doing','Doing',''],['waiting','Waiting','w'],['done','Done','d']];
   const armKey = 'task:' + t.id;
-  dr.innerHTML = `<div class="dr-h"><div class="crumb">${esc(taskCat(t)?.name || '')}${projById(t.project) ? ' › ' + esc(projById(t.project).name) : ''}${msById(t) ? ' › ' + esc(msById(t).name) : ''}</div>
+  dr.innerHTML = `<div class="dr-h"><div class="crumb">${taskCat(t) ? `<button class="crumb-link" data-act="nav" data-v="cat" data-id="${taskCat(t).id}">${esc(taskCat(t).name)}</button>` : 'Inbox'}${projById(t.project) ? ` › <button class="crumb-link" data-act="nav" data-v="proj" data-id="${t.project}">${esc(projById(t.project).name)}</button>` : ''}${msById(t) ? ' › ' + esc(msById(t).name) : ''}</div>
       <button class="icon-btn" data-act="close" aria-label="Close">✕</button></div>
     <div class="dr-b">
       <textarea class="dr-title" id="d-title" rows="1" data-field="title">${esc(t.title)}</textarea>
@@ -2200,6 +2224,7 @@ function renderDrawer(){
         ${effDue(t) ? `<label class="fld"><span class="lbl">Start showing &amp; reminding (days before)</span><input type="number" id="d-lead" inputmode="numeric" min="0" max="365" step="1" list="lead-presets" data-field="lead" value="${leadNum(t.lead) ?? ''}" placeholder="Default: ${defLead()}"></label>
         <div class="fld" style="grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="meta" style="font-size:12px;color:var(--muted)">${t.status==='done' ? '' : surfaced(t) ? 'Showing in “Deadlines coming up” now.' : 'Shows up in “Deadlines coming up” from ' + short(showFrom(t)) + '.'}</span><button class="btn" data-act="cal-one" data-id="${t.id}">Add to calendar (.ics)</button></div>` : ''}
         <label class="fld"><span class="lbl">Planned day</span><input type="date" id="d-day" value="${t.status==='done' ? (t.day||'') : effDay(t)}" data-field="day"></label>
+        ${t.day && t.status !== 'done' && t.status !== 'waiting' ? `<div class="fld" style="grid-column:1/-1"><span class="lbl">Block off</span><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${[1, 2, 3, 5].map(n => `<button class="q ${blockLen(t) === n ? 'on' : ''}" data-act="block" data-id="${t.id}" data-n="${n}">${n === 1 ? '1 day' : n + ' days'}</button>`).join('')}<span class="meta">or through</span><input type="date" id="d-dayto" value="${blockLen(t) > 1 ? t.dayTo : ''}" min="${effDay(t)}" data-field="dayTo" style="font-size:12px;padding:2px 6px"></div></div>` : ''}
         <label class="fld"><span class="lbl">On the week list</span><select id="d-week" data-field="week">
           <option value="">Not planned</option>
           <option value="${curWeek()}" ${effWeek(t)===curWeek()?'selected':''}>This week</option>
@@ -2264,7 +2289,7 @@ document.addEventListener('click', e => {
     case 'bd-mode': UI.boardMode = el.dataset.m; lsSet('lt_boardmode', UI.boardMode); break;
     case 'bd-cat': UI.boardCat = id || ''; break;
     case 'pick': planDay(id, UI.day); return;
-    case 'unplan': { const t = M.tasks.get(id); if (t){ t.day = ''; t.time = ''; if (!t.week || normW(t.week) < curWeek()) t.week = weekOf(UI.day); if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week); saveTask(t); } break; }
+    case 'unplan': { const t = M.tasks.get(id); if (t && blockLen(t) > 1 && UI.day < blockEnd(t)){ t.day = addDays(UI.day, 1); if (t.day >= t.dayTo) t.dayTo = ''; saveTask(t); break; } if (t){ t.dayTo = ''; t.day = ''; t.time = ''; if (!t.week || normW(t.week) < curWeek()) t.week = weekOf(UI.day); if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week); saveTask(t); } break; }
     case 'pick-toggle': UI.openPick.has(id) ? UI.openPick.delete(id) : UI.openPick.add(id); break;
     case 'day-prev': UI.day = addDays(UI.day, -1); break;
     case 'day-next': UI.day = addDays(UI.day, 1); break;
@@ -2284,6 +2309,7 @@ document.addEventListener('click', e => {
     case 'ord-reset': setDayOrder(el.dataset.d, []); break;
     case 'qa-tips': UI.qaTips = !UI.qaTips; break;
     case 'pick-more': UI.pickMore = !UI.pickMore; break;
+    case 'block': { const t = M.tasks.get(id); if (t){ const s0 = effDay(t) || t.day, n = +el.dataset.n; t.day = s0; t.week = weekOf(s0); if (!hasWeek(t, t.week)) t.weeks.push(t.week); t.dayTo = n > 1 ? addDays(s0, n - 1) : ''; saveTask(t); } break; }
     case 'ping-in': { const t = M.tasks.get(id); if (t){ t.pingBy = addDays(today(), +el.dataset.n); saveTask(t); } break; }
     case 'focus': toggleFocus(el.dataset.k, el.dataset.w); break;
     case 'focus-last': { const W = el.dataset.w; setFocus(W, focusOf(addDays(W, -7)).slice(0, FOCUS_MAX)); break; }
@@ -2452,6 +2478,7 @@ document.addEventListener('change', e => {
   if (f === 'title'){ const v = el.value.trim(); if (v && v !== t.title){ t.title = v; saveTask(t); } }
   else if (f === 'target'){ const v = el.value; if (v.startsWith('p:')){ t.project = v.slice(2); t.cat = projById(t.project)?.cat || ''; } else { t.project = ''; t.cat = v.slice(2); } if (!msById(t)) t.milestone = ''; saveTask(t); }
   else if (f === 'milestone'){ t.milestone = el.value; saveTask(t); }
+  else if (f === 'dayTo'){ const v = el.value; t.dayTo = v && t.day && v > t.day ? v : ''; saveTask(t); }
   else if (f === 'lead'){ const n = leadNum(el.value); t.lead = n ?? ''; saveTask(t); }
   else if (f === 'day'){ if (el.value) setWhen(t, el.value); else { t.day = ''; } saveTask(t); }
   else if (f === 'week'){ if (el.value){ t.day = (t.day && weekOf(t.day) === el.value) ? t.day : ''; t.week = el.value; if (!t.weeks.includes(el.value)) t.weeks.push(el.value); } else { t.day=''; t.week=''; } saveTask(t); }
@@ -2529,7 +2556,7 @@ function dropOn(z, ref, y){
     const key = ref.startsWith('step:') ? 's:' + ref.slice(5) : 't:' + ref;
     if (z.dataset.ord === key) return;
     if (ref.startsWith('step:')){ const [tid, sid] = ref.slice(5).split('|'), x = findStep(tid, sid); if (!x) return; if (sDay(x.c) !== D){ x.c.day = D; x.c.week = weekOf(D); saveTask(x.t); } }
-    else { const t = M.tasks.get(ref); if (!t || t.status === 'done') return; if (effDay(t) !== D){ setWhen(t, D); saveTask(t); } }
+    else { const t = M.tasks.get(ref); if (!t || t.status === 'done') return; if (!onDay(t, D)){ setWhen(t, D); saveTask(t); } }
     const keys = [...list.querySelectorAll(':scope > [data-ord]')].map(el => el.dataset.ord).filter(k => k !== key);
     const r = z.getBoundingClientRect();
     let i = keys.indexOf(z.dataset.ord); if (i < 0) i = keys.length; else if (y != null && y > r.top + r.height / 2) i++;
