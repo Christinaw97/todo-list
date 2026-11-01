@@ -181,6 +181,7 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .ord{position:relative}
 .ord.ins-before{box-shadow:inset 0 3px 0 var(--accent)}
 .ord.ins-after{box-shadow:inset 0 -3px 0 var(--accent)}
+#update-bar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:300;display:flex;align-items:center;gap:12px;padding:10px 12px 10px 16px;border-radius:10px;background:var(--panel);border:1px solid var(--accent);box-shadow:var(--shadow);font-size:13.5px;white-space:nowrap}
 .drag-ghost{position:fixed;z-index:200;pointer-events:none;opacity:.92;box-shadow:var(--shadow);border-radius:8px;background:var(--panel);border:1px solid var(--accent);transform:rotate(1.5deg)}
 @media (hover:none){ [data-drag],[data-drag-step]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none} }
 
@@ -581,6 +582,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
+const APP_VERSION = 'todo-v19';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1672,7 +1674,8 @@ function renderSync(){
       </div>
       <div class="hint">Importing merges the backup with what’s here; nothing is deleted. Backups from the Claude version work too. Every sync is also a commit in your repo, so GitHub keeps the full history.</div>
     </div>
-    <input type="file" id="import-file" accept=".json,application/json" style="display:none">`;
+    <input type="file" id="import-file" accept=".json,application/json" style="display:none">
+    <div class="hint" style="max-width:640px;margin-top:14px">App version ${APP_VERSION}</div>`;
 }
 
 function deadlineSettings(){
@@ -2322,6 +2325,24 @@ document.addEventListener('touchend', e => {
   else tdEnd();
 }, { passive: false });
 document.addEventListener('touchcancel', tdEnd);
+
+/* Phone: swipe right to open the sidebar, swipe left to close it */
+let SWP = null;
+document.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1 || innerWidth > 780){ SWP = null; return; }
+  const p = e.touches[0];
+  SWP = { x: p.clientX, y: p.clientY, t: Date.now(),
+    sideways: !!e.target.closest('.board-wrap, .days-wrap, input, textarea, select, #drawer, .drag-ghost') };
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  const s0 = SWP; SWP = null;
+  if (!s0 || TD || Date.now() - touchDropAt < 400) return;
+  const p = e.changedTouches[0], dx = p.clientX - s0.x, dy = p.clientY - s0.y;
+  if (Date.now() - s0.t > 700 || Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+  const side = document.getElementById('side'), isOpen = side.classList.contains('open');
+  if (dx > 0 && !isOpen && !UI.open && (!s0.sideways || s0.x < 30)) toggleSide();
+  else if (dx < 0 && isOpen) toggleSide();
+}, { passive: true });
 document.addEventListener('contextmenu', e => { if (TD) e.preventDefault(); });
 // the tap that ends a drag shouldn't also open the task
 document.addEventListener('click', e => { if (Date.now() - touchDropAt < 500){ e.stopPropagation(); e.preventDefault(); } }, true);
@@ -2472,7 +2493,30 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && re
 if (UI.view === 'add'){ render(); focusCap(); }
 initStore();
 document.addEventListener('visibilitychange', () => { if (!document.hidden && ghCfg()) scheduleSync(200); });
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
+// Home-screen apps on iPhone often resume instead of reloading, so check for a newer version when the app comes back
+let updateShown = false;
+function checkForUpdate(){
+  if (updateShown || !location.protocol.startsWith('http')) return;
+  fetch('sw.js?check=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(t => {
+    const m = t.match(/VERSION = '([^']+)'/);
+    if (m && m[1] !== APP_VERSION && !updateShown){
+      updateShown = true;
+      const bar = document.createElement('div');
+      bar.id = 'update-bar';
+      bar.innerHTML = 'A new version is ready. <button class="btn pri" id="update-now">Update</button>';
+      document.body.appendChild(bar);
+      document.getElementById('update-now').onclick = () => location.reload();
+    }
+  }).catch(() => {});
+}
+setTimeout(checkForUpdate, 3000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkForUpdate(); });
+setInterval(checkForUpdate, 30 * 60 * 1000);
 </script>
 </body>
 </html>
