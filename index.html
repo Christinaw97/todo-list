@@ -431,6 +431,7 @@ body.v-board .kcol-b > *{flex-shrink:0}
 .setup{max-width:520px;margin:60px auto;text-align:center}
 .setup h1{font-size:22px;margin:0 0 8px}
 .setup p{color:var(--muted)}
+.setup a{color:var(--accent)}
 
 @media (max-width:780px){
   aside{position:fixed;top:0;left:0;bottom:0;z-index:45;transform:translateX(-105%);transition:transform .18s ease;padding-top:calc(16px + env(safe-area-inset-top,0px))}
@@ -582,7 +583,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v19';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v20';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -866,7 +867,13 @@ function findTarget(text){
   }
   return '';
 }
-function fmtClock(h, m, ap){ return h + (m ? ':' + pad(m) : '') + (ap ? ' ' + ap : ''); }
+// No am/pm given: 1–7 and 12 read as afternoon, 8–11 as morning (24-hour times convert themselves)
+const guessAp = h => h === 0 || h > 12 ? '' : (h === 12 || h <= 7) ? 'pm' : 'am';
+function fmtClock(h, m, ap){
+  if (!ap && h > 12 && h <= 23){ h -= 12; ap = 'pm'; }
+  else if (!ap && h === 0){ h = 12; ap = 'am'; }
+  return h + (m ? ':' + pad(m) : '') + (ap ? ' ' + ap : '');
+}
 function timeStart(str){
   if (!str) return 9999;
   const m = String(str).toLowerCase().match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|a|p)?/);
@@ -888,7 +895,7 @@ function extractTime(s){
     if (!ok) return m;
     // plain "2-4" style ranges only if both look like clock hours
     if (!pre && !a1 && !a2 && !m1 && !m2 && (+h1 > 12 || +h2 > 12)) return m;
-    found = fmtClock(+h1, +(m1||0), h2 ? '' : (a1||'').toLowerCase()) + (h2 ? '–' + fmtClock(+h2, +(m2||0), (a2||a1||'').toLowerCase()) : '');
+    found = fmtClock(+h1, +(m1||0), h2 ? '' : ((a1||'').toLowerCase() || guessAp(+h1))) + (h2 ? '–' + fmtClock(+h2, +(m2||0), (a2||a1||'').toLowerCase()) : '');
     return ' ';
   });
   return { text: out, time: found };
@@ -1149,7 +1156,7 @@ function restoreScroll(saved, sameView){
     document.querySelectorAll(sel).forEach((el, j) => { const p = saved[i][j]; if (p){ el.scrollTop = p[0]; el.scrollLeft = p[1]; } });
   });
 }
-let lastRenderedView = null;
+let lastRenderedView = null, rendering = false;
 function render(){
   if (!ready && UI.view !== 'add') return;
   if (M.meta){
@@ -1157,6 +1164,7 @@ function render(){
     if (UI.ws !== ws){ UI.week = curWeek(); UI.ws = ws; }   // first load, or the week start changed (here or on another device)
     else UI.week = normW(UI.week) || curWeek();
   }
+  rendering = true;
   const scrollSaved = saveScroll(), viewKey = UI.view + '|' + (UI.proj || '') + '|' + (UI.cat || '') + '|' + (UI.open || '');
   document.body.classList.toggle('v-add', UI.view === 'add');
   document.body.classList.toggle('v-board', UI.view === 'board');
@@ -1183,6 +1191,7 @@ function render(){
   const dt = document.getElementById('d-title');
   if (dt){ dt.style.height = 'auto'; dt.style.height = dt.scrollHeight + 'px'; }
   restoreScroll(scrollSaved, viewKey === lastRenderedView);
+  rendering = false;
   if (matchMedia('(hover: none) and (pointer: coarse)').matches) document.querySelectorAll('[draggable="true"]').forEach(el => el.removeAttribute('draggable'));   // touch uses press-and-hold dragging instead
   lastRenderedView = viewKey;
 
@@ -1249,14 +1258,29 @@ function sideInput(which){
 
 function renderSetup(){
   const cfg = ghCfg();
-  return `<div class="setup card" style="padding:28px;text-align:left">
+  const guide = 'https://github.com/Christinaw97/todo-list#readme';
+  if (cfg) return `<div class="setup card" style="padding:28px;text-align:left">
     <h1>Welcome</h1>
-    <p>${cfg ? 'Connected to GitHub, but there’s nothing saved yet.' : 'Your tasks are saved on this device. To use the same tracker on your laptop and phone, connect a private GitHub repository.'}</p>
+    <p>Connected to GitHub, but there’s nothing saved yet. If you have a backup, import it. Otherwise start fresh.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px">
-      ${cfg ? '' : '<button class="btn pri" data-act="nav" data-v="sync">Connect to GitHub</button>'}
-      <button class="btn ${cfg ? 'pri' : ''}" data-act="import-pick">Import a backup (.json)</button>
+      <button class="btn pri" data-act="import-pick">Import a backup (.json)</button>
       <button class="btn" data-act="setup">Start empty</button>
     </div>
+  </div>`;
+  return `<div class="setup card" style="padding:28px;text-align:left">
+    <h1>Welcome to Todo List</h1>
+    <p>A personal tracker for projects, goals, deadlines, and your weekly and daily plan. There’s no account to create and no one else can see your tasks.</p>
+    <div style="margin-top:18px;display:grid;gap:12px">
+      <div><b>Try it now.</b> <span style="color:var(--muted)">Press “Start empty” and begin adding tasks. They’re saved in this browser and work offline.</span></div>
+      <div><b>Use it on more than one device.</b> <span style="color:var(--muted)">Connect your own private GitHub repository and your tracker syncs between your phone and laptop. You make the repo and the token, so your data stays yours. It takes about five minutes.</span></div>
+      <div><b>Switching from another copy?</b> <span style="color:var(--muted)">Import a backup (.json) and everything comes with you.</span></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:20px">
+      <button class="btn pri" data-act="setup">Start empty</button>
+      <button class="btn" data-act="nav" data-v="sync">Connect to GitHub</button>
+      <button class="btn" data-act="import-pick">Import a backup (.json)</button>
+    </div>
+    <div class="hint" style="margin-top:16px">Not sure how to connect? <a href="${guide}" target="_blank" rel="noopener">Read the setup guide</a>. Clearing your browser data erases a tracker that isn’t connected, so download a backup now and then from Sync &amp; backup.</div>
   </div>`;
 }
 
@@ -2106,7 +2130,7 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('change', e => {
   const el = e.target;
-  if (el.id === 'time-edit'){ saveTimeEdit(el); return; }
+  if (el.id === 'time-edit') return;   // saved on Enter or when the box loses focus
   if (el.id === 'qa-target'){ UI.lastProj = el.value; lsSet('lt_lastproj', el.value); return; }
   if (el.id === 'qa-when'){
     const di = document.getElementById('qa-date');
@@ -2171,7 +2195,8 @@ document.addEventListener('change', e => {
 
 let noteTimer = null;
 document.addEventListener('focusout', e => {
-  if (e.target.dataset?.stepDate){ const k = e.target.id; setTimeout(() => { const i = document.getElementById(k); if (UI.stepPick === k && document.activeElement !== i){ UI.stepPick = null; render(); } }, 250); } if (e.target.id === 'time-edit' && UI.editTime) setTimeout(() => { const el = document.getElementById('time-edit'); if (el && document.activeElement !== el) saveTimeEdit(el); }, 0); });
+  if (e.target.dataset?.stepDate){ const k = e.target.id; setTimeout(() => { const i = document.getElementById(k); if (UI.stepPick === k && document.activeElement !== i){ UI.stepPick = null; render(); } }, 250); } if (e.target.id === 'time-edit' && !rendering && UI.editTime === e.target.dataset.tkey){ const el = e.target; commitTime(el); UI.editTime = null; setTimeout(() => requestRender(), 160); }
+});
 document.addEventListener('input', e => {
   if (e.target.id === 'day-notes'){
     const D = e.target.dataset.day, val = e.target.value;
@@ -2371,16 +2396,20 @@ function qaAdd(){
 }
 function normTime(v){
   v = v.trim(); if (!v) return '';
+  const bare = v.match(/^(\d{1,2})(?::(\d{2}))?$/);
+  if (bare){ const h = +bare[1], m = +(bare[2] || 0); if (h <= 23 && m < 60) return fmtClock(h, m, guessAp(h)); }
   const r = extractTime(' ' + v + ' ');
   return r.time && !r.text.trim() ? r.time : v;
 }
-function saveTimeEdit(el){
-  if (!UI.editTime) return;
-  const key = el.dataset.tkey, v = normTime(el.value);
-  UI.editTime = null;
-  const parts = key.split(':');
+function commitTime(el){
+  const key = el.dataset.tkey, v = normTime(el.value), parts = key.split(':');
   if (parts[0] === 't'){ const t = M.tasks.get(parts[1]); if (t && (t.time||'') !== v){ t.time = v; saveTask(t); } }
   else { const x = findStep(parts[1], parts[2]); if (x && (x.c.time||'') !== v){ x.c.time = v; saveTask(x.t); } }
+}
+function saveTimeEdit(el){
+  if (!UI.editTime || el.dataset.tkey !== UI.editTime) return;
+  commitTime(el);
+  UI.editTime = null;
   render();
 }
 async function ghConnect(){
