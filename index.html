@@ -349,6 +349,7 @@ textarea.notes:focus{border-color:var(--accent)}
 .side-star{color:var(--wait);margin-right:3px}
 .btn.focus-on{color:var(--wait);border-color:var(--wait)}
 .ms-h.focus{box-shadow:inset 3px 0 0 var(--wait)}
+.checkon{color:var(--wait);font-weight:600}
 .pk-more{display:block;border:0;background:none;color:var(--accent);font-size:12px;padding:4px 14px 6px 29px}
 .pk-goal{padding:4px 14px 0 29px;font-size:11.5px;color:var(--muted)}
 .pk-goal.cur{color:var(--accent);font-weight:600}
@@ -574,7 +575,7 @@ function msStats(p, m){ const l = tasks().filter(t => t.project === p.id && t.mi
 
 function effDay(t){
   if (t.status === 'done') return t.doneDate || '';
-  if (t.status === 'waiting' && t.handedOff) return t.handedOff === today() ? t.handedOff : '';
+  if (t.status === 'waiting' && t.handedOff){ const td = today(); if (t.handedOff === td) return td; return t.pingBy && t.pingBy <= td ? td : ''; }
   if (!t.day) return '';
   const td = today();
   return t.day < td ? td : t.day;
@@ -618,7 +619,7 @@ const effDue = t => { const g = goalDue(t); return !t.due ? g : !g ? t.due : (g 
 const dueFromGoal = t => { const g = goalDue(t); return !!g && (!t.due || g < t.due); };
 const showFrom = t => effDue(t) ? addDays(effDue(t), -leadOf(t)) : '';
 const surfaced = (t, D) => isOpen(t) && !!effDue(t) && (D || today()) >= showFrom(t);
-const calAlerts = () => ({ start:true, week:true, day:true, on:false, people:true, ...(M.meta?.calAlerts || {}) });
+const calAlerts = () => ({ start:true, week:true, day:true, on:false, people:true, pings:true, ...(M.meta?.calAlerts || {}) });
 function dueIn(d){
   const n = dayDiff(today(), d);
   if (n < 0) return 'overdue ' + (-n) + (n === -1 ? ' day' : ' days');
@@ -629,7 +630,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v27';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v28';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -852,6 +853,8 @@ function setWhen(t, when){
   if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week);
 }
 const handoffLine = t => short(today()) + ': did my part, now waiting' + (t.waitingOn ? ' on ' + t.waitingOn : '') + '.';
+const pingDays = () => leadNum(M.meta?.pingDays) || 7;
+const pingLabel = () => pingDays() === 7 ? '1 week' : pingDays() === 14 ? '2 weeks' : pingDays() + ' days';
 const STATUS_NAME = { todo:'To do', doing:'Doing', waiting:'Waiting', done:'Done' };
 // The next day you planned to act on a task (its planned day, or its earliest planned open step), if it's after today
 function nextActionDay(t){
@@ -863,7 +866,7 @@ function nextActionDay(t){
 // When to follow up after handing something off: your next planned action, else in 3 days, but before the deadline
 function defaultPingDay(t){
   const na = nextActionDay(t); if (na) return na;
-  const td = today(); let d = addDays(td, 3);
+  const td = today(); let d = addDays(td, pingDays());
   const dd = effDue(t);
   if (dd && dd > td){ const before = addDays(dd, -1); if (before < d) d = before; }
   return d;
@@ -896,7 +899,7 @@ function toggleDone(id){
 }
 function markPinged(id){
   const t = M.tasks.get(id); if (!t) return;
-  t.pingCount = (t.pingCount||0) + 1; t.lastPing = today(); t.pingBy = addDays(today(), 3);
+  t.pingCount = (t.pingCount||0) + 1; t.lastPing = today(); t.pingBy = addDays(today(), pingDays());
   saveTask(t); render();
 }
 function quickToday(id){
@@ -1181,10 +1184,10 @@ function taskRowOnly(t, ctx){
   return `<div class="task ${t.status==='done'?'is-done':''}" draggable="true" data-drag="${t.id}">
     <button class="chk ${t.status} ${t.status === 'waiting' && t.handedOff ? 'handed' : ''}" data-act="done" data-id="${t.id}" aria-label="${t.status==='done'?'Mark not done':'Mark done'}" ${t.status === 'waiting' && t.handedOff ? 'title="Your part is done; waiting on someone else"' : ''}>${t.status==='done'?'✓':''}</button>
     <div class="t-main" data-act="open" data-id="${t.id}">
-      <div class="t-title">${timeBit(t, null, ctx)}${esc(t.title)}</div>
+      <div class="t-title">${timeBit(t, null, ctx)}${ctx === 'today' && t.status === 'waiting' && t.handedOff && t.handedOff !== UI.day ? '<span class="checkon">Check on:</span> ' : ''}${esc(t.title)}</div>
       <div class="chips">${chipsFor(t, ctx)}</div>
     </div>
-    ${t.status!=='done' && ctx === 'today' ? `<div class="t-quick">${timeBtn(t, null, ctx)}<button class="q" data-act="unplan" data-id="${t.id}" title="Take it off this day">Not ${UI.day===today()?'today':'this day'}</button></div>` : ''}
+    ${t.status!=='done' && ctx === 'today' ? `<div class="t-quick">${timeBtn(t, null, ctx)}${t.status === 'waiting' && pingDue(t) ? `<button class="q on" data-act="pinged" data-id="${t.id}" title="Checked, still waiting: follow up again later">Pinged, again in ${pingLabel()}</button>` : `<button class="q" data-act="unplan" data-id="${t.id}" title="Take it off this day">Not ${UI.day===today()?'today':'this day'}</button>`}</div>` : ''}
     ${t.status!=='done' && ctx !== 'today' ? `<div class="t-quick">
       <button class="q ${inToday?'on':''}" data-act="today" data-id="${t.id}" title="Plan for today">Today</button>
       <button class="q ${inWeek?'on':''}" data-act="week" data-id="${t.id}" title="Put on the week list">Week</button>
@@ -1413,13 +1416,13 @@ function renderWeek(){
 
   // Follow-ups due
   if (isCur){
-    const fu = all.filter(pingDue).sort((a,b) => a.pingBy < b.pingBy ? -1 : 1);
+    const fu = all.filter(t => pingDue(t) && effDay(t) !== td).sort((a,b) => a.pingBy < b.pingBy ? -1 : 1);
     if (fu.length){
       h += `<div class="o-fu"><div class="fu"><div class="fu-h">Follow up today</div>` + fu.map(t => `<div class="fu-row">
         <span class="who">${esc(t.waitingOn || 'Someone')}</span>
         <span class="what" data-act="open" data-id="${t.id}">${esc(t.title)}</span>
         <span class="when">${t.pingBy < td ? 'was due ' + rel(t.pingBy) : 'due today'}${t.pingCount ? ', pinged ' + t.pingCount + '×' : ''}</span>
-        <button class="btn" data-act="pinged" data-id="${t.id}">Pinged, remind in 3 days</button>
+        <button class="btn" data-act="pinged" data-id="${t.id}">Pinged, remind in ${pingLabel()}</button>
         <button class="btn" data-act="done" data-id="${t.id}">Resolved</button>
       </div>`).join('') + `</div></div>`;
     }
@@ -1528,11 +1531,11 @@ function renderToday(){
     ${totalN ? `<div class="prog"><span class="bar"><i style="width:${pct}%"></i></span>${doneN} of ${totalN} done${handedN ? `, ${handedN} handed off` : ''}</div>` : ''}`;
 
   if (isToday){
-    const fu = all.filter(pingDue);
+    const fu = all.filter(t => pingDue(t) && effDay(t) !== D);
     if (fu.length) h += `<div class="fu" style="margin-top:0;margin-bottom:16px"><div class="fu-h">Follow up today</div>` + fu.map(t => `<div class="fu-row">
         <span class="who">${esc(t.waitingOn || 'Someone')}</span>
         <span class="what" data-act="open" data-id="${t.id}">${esc(t.title)}</span>
-        <button class="btn" data-act="pinged" data-id="${t.id}">Pinged, remind in 3 days</button>
+        <button class="btn" data-act="pinged" data-id="${t.id}">Pinged, remind in ${pingLabel()}</button>
         <button class="btn" data-act="done" data-id="${t.id}">Resolved</button></div>`).join('') + `</div>`;
   }
 
@@ -1876,10 +1879,12 @@ function deadlineSettings(){
         <label class="fld"><span class="lbl">Weeks start on</span><select data-set="weekStart"><option value="0" ${weekStart()===0?'selected':''}>Sunday</option><option value="1" ${weekStart()===1?'selected':''}>Monday</option></select></label>
         <div class="fld" style="font-size:12px;color:var(--muted);align-self:end">Unfinished tasks move to the new week when it starts.</div>
         <label class="fld"><span class="lbl">Start showing deadlines (days before)</span><input type="number" inputmode="numeric" min="0" max="365" step="1" list="lead-presets" data-set="leadDays" value="${defLead()}"></label>
+        <label class="fld"><span class="lbl">Follow up on waiting tasks after (days)</span><input type="number" inputmode="numeric" min="1" max="60" data-set="pingDays" value="${pingDays()}"></label>
         <label class="fld"><span class="lbl">Calendar alert time</span><input type="time" data-set="calTime" value="${esc(M.meta.calTime || '09:00')}"></label>
       </div>
       <div class="lbl" style="margin-top:12px">Calendar alerts</div>
       <div class="set-row">${ck('start','When it starts showing')}${ck('week','1 week before')}${ck('day','1 day before')}${ck('on','On the day')}</div>
+      <div class="set-row">${ck('pings','Follow-up (ping) dates for waiting tasks')}</div>
       <div class="set-row">${ck('people','Include deadlines of tasks other people are doing (labelled with their name)')}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn pri" data-act="cal-all">Download calendar (.ics)</button><span class="meta" style="align-self:center;font-size:12px;color:var(--muted)">${n} open ${n === 1 ? 'task has' : 'tasks have'} a deadline</span></div>
       <div class="hint">Each task can override when it starts showing, in its own Deadline settings. The calendar file adds every open deadline as an all-day event with these alerts; open it and your Calendar app will remind you even when this app is closed. It’s a snapshot, so download it again after adding or moving deadlines. Events keep the same IDs, but some calendar apps still add a second copy, so importing into a separate calendar (for example “Todo deadlines”) makes it easy to clear and re-import. On iPhone, do this from Safari rather than the home-screen app.</div>
@@ -1891,7 +1896,7 @@ function icsFold(line){
   for (const ch of line){ const b = enc.encode(ch).length; if (len + b > 74){ out.push(cur); cur = ' '; len = 1; } cur += ch; len += b; }
   out.push(cur); return out.join('\r\n');
 }
-function buildIcs(list, goals){
+function buildIcs(list, goals, pings){
   const a = calAlerts(), [hh, mm] = (M.meta?.calTime || '09:00').split(':').map(Number), mins = (hh||0)*60 + (mm||0);
   const stampNow = new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
   const url = location.origin + location.pathname;
@@ -1908,6 +1913,12 @@ function buildIcs(list, goals){
       L.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(say(n) + ': ' + t.title), 'TRIGGER:' + (off > 0 ? '-PT' + off + 'M' : 'PT' + (-off) + 'M'), 'END:VALARM');
     }
     L.push('END:VEVENT');
+  }
+  for (const t of (pings || [])){
+    L.push('BEGIN:VEVENT', 'UID:ping-' + t.id + '@todo-list', 'DTSTAMP:' + stampNow,
+      'DTSTART;VALUE=DATE:' + t.pingBy.replace(/-/g,''), 'DTEND;VALUE=DATE:' + addDays(t.pingBy, 1).replace(/-/g,''),
+      'SUMMARY:' + icsEsc('Follow up: ' + t.title + (t.waitingOn ? ' (' + t.waitingOn + ')' : '')), 'DESCRIPTION:' + icsEsc(projLabel(t) + '\n' + url), 'URL:' + url, 'TRANSP:TRANSPARENT',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc('Follow up: ' + t.title), 'TRIGGER:PT' + mins + 'M', 'END:VALARM', 'END:VEVENT');
   }
   for (const { p, m } of (goals || [])){
     const who = m.who ? m.who + ': ' : '';
@@ -1932,8 +1943,9 @@ function buildIcs(list, goals){
 function calExport(){
   const list = tasks().filter(t => isOpen(t) && effDue(t) && (calAlerts().people || mine(t)));
   const goals = allGoals().filter(({m}) => !m.done && (m.due || m.remind) && (calAlerts().people || !m.who));
-  if (!list.length && !goals.length){ showNote('No open tasks have a deadline yet. Set one in a task’s Deadline field.'); return; }
-  downloadFile('todo-deadlines.ics', buildIcs(list, goals), 'text/calendar');
+  const pings = calAlerts().pings ? tasks().filter(t => isOpen(t) && t.status === 'waiting' && t.pingBy && (calAlerts().people || mine(t))) : [];
+  if (!list.length && !goals.length && !pings.length){ showNote('No open tasks have a deadline yet. Set one in a task’s Deadline field.'); return; }
+  downloadFile('todo-deadlines.ics', buildIcs(list, goals, pings), 'text/calendar');
 }
 function renderAdd(){
   const recent = UI.recent.map(id => M.tasks.get(id)).filter(Boolean);
@@ -2165,8 +2177,9 @@ function renderDrawer(){
           <label class="fld"><span class="lbl">Waiting on</span><input id="d-who" value="${esc(t.waitingOn)}" placeholder="Name" data-field="waitingOn"></label>
           <label class="fld"><span class="lbl">Ping again on</span><input type="date" id="d-ping" value="${t.pingBy}" data-field="pingBy"></label>
         </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="meta">Check back in</span>${[3, 7, 14].map(n => `<button class="q ${t.pingBy === addDays(today(), n) ? 'on' : ''}" data-act="ping-in" data-id="${t.id}" data-n="${n}">${n === 7 ? '1 week' : n === 14 ? '2 weeks' : n + ' days'}</button>`).join('')}</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="btn" data-act="pinged" data-id="${t.id}">Pinged today, remind in 3 days</button>
+          <button class="btn" data-act="pinged" data-id="${t.id}">Pinged today, remind in ${pingLabel()}</button>
           <span class="meta">${t.pingCount ? `Pinged ${t.pingCount}× so far, last ${rel(t.lastPing)}` : 'Not pinged yet'}</span>
         </div></div>` : ''}
       <div class="grid2">
@@ -2262,6 +2275,7 @@ document.addEventListener('click', e => {
     case 'ord-reset': setDayOrder(el.dataset.d, []); break;
     case 'qa-tips': UI.qaTips = !UI.qaTips; break;
     case 'pick-more': UI.pickMore = !UI.pickMore; break;
+    case 'ping-in': { const t = M.tasks.get(id); if (t){ t.pingBy = addDays(today(), +el.dataset.n); saveTask(t); } break; }
     case 'focus': toggleFocus(el.dataset.k, el.dataset.w); break;
     case 'focus-last': { const W = el.dataset.w; setFocus(W, focusOf(addDays(W, -7)).slice(0, FOCUS_MAX)); break; }
     case 'proj-archive': { const p = projById(id); if (p){ p.archived = true; p.archivedAt = today(); saveMeta(); showNote('Archived “' + p.name + '”. You can find it under Archived in the sidebar.'); } break; }
@@ -2391,6 +2405,7 @@ document.addEventListener('change', e => {
     if (k === 'leadDays') M.meta.leadDays = leadNum(el.value) ?? 1;
     else if (k === 'weekStart'){ M.meta.weekStart = +el.value === 1 ? 1 : 0; UI.week = curWeek(); }
     else if (k === 'calTime') M.meta.calTime = el.value || '09:00';
+    else if (k === 'pingDays') M.meta.pingDays = Math.max(1, Math.min(60, Math.round(+el.value) || 7));
     else M.meta.calAlerts = { ...calAlerts(), [k]: el.checked };
     saveMeta(); render(); return;
   }
