@@ -162,6 +162,7 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .chip.wait{color:var(--wait);border-color:var(--wait-line);background:var(--wait-bg)}
 .chip.late{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent);background:var(--danger-soft)}
 .chip.soon{color:var(--wait)}
+.chip.who{color:var(--text);border-color:color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-soft)}
 .chip.ahead{color:var(--doing)}
 .set-row{display:flex;gap:14px 18px;flex-wrap:wrap;margin-top:10px}
 .set-row label.ck{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text)}
@@ -543,13 +544,18 @@ const leadLabel = n => n === 0 ? 'the same day' : n === 1 ? '1 day' : LEAD_NAMES
 const leadNum = v => { if (v === '' || v == null) return null; const n = Math.round(+v); return Number.isFinite(n) ? Math.max(0, Math.min(365, n)) : null; };
 const defLead = () => leadNum(M.meta?.leadDays) ?? 30;
 const leadOf = t => leadNum(t.lead) ?? defLead();
+// Who: '' means me; otherwise the person doing it (a student or collaborator)
+const whoOf = t => (t.who || '').trim();
+const mine = t => !whoOf(t);
+function people(){ const m = new Map(); for (const t of M.tasks.values()){ const w = whoOf(t); if (w && !m.has(w.toLowerCase())) m.set(w.toLowerCase(), w); } return [...m.values()].sort((a,b) => a.localeCompare(b)); }
+function canonPerson(v){ v = (v || '').trim().replace(/^@/, ''); if (!v || /^(me|myself)$/i.test(v)) return ''; return people().find(p => p.toLowerCase() === v.toLowerCase()) || v; }
 // A goal's deadline applies to all its tasks; a task keeps its own date if that is earlier
 const goalDue = t => { const m = msById(t); return m && !m.done && m.due ? m.due : ''; };
 const effDue = t => { const g = goalDue(t); return !t.due ? g : !g ? t.due : (g < t.due ? g : t.due); };
 const dueFromGoal = t => { const g = goalDue(t); return !!g && (!t.due || g < t.due); };
 const showFrom = t => effDue(t) ? addDays(effDue(t), -leadOf(t)) : '';
 const surfaced = (t, D) => isOpen(t) && !!effDue(t) && (D || today()) >= showFrom(t);
-const calAlerts = () => ({ start:true, week:true, day:true, on:false, ...(M.meta?.calAlerts || {}) });
+const calAlerts = () => ({ start:true, week:true, day:true, on:false, people:true, ...(M.meta?.calAlerts || {}) });
 function dueIn(d){
   const n = dayDiff(today(), d);
   if (n < 0) return 'overdue ' + (-n) + (n === -1 ? ' day' : ' days');
@@ -750,7 +756,7 @@ const UI = {
   lastMs: {},
   openMs: new Set()
 };
-const HASH_VIEWS = ['today','week','board','add','waiting','log','inbox','sync'];
+const HASH_VIEWS = ['today','week','board','add','waiting','log','inbox','sync','people'];
 function applyHash(){
   const h = location.hash.slice(1);
   if (HASH_VIEWS.includes(h)){ const prev = UI.view; UI.view = h; if (h === 'week' && prev !== 'week') UI.week = curWeek(); if (h === 'today' && prev !== 'today') UI.day = today(); }
@@ -912,6 +918,7 @@ function parseQuick(raw){
     return ' ';
   });
   { const tt = extractTime(s); if (tt.time){ out.time = tt.time; s = tt.text; } }
+  s = s.replace(/\s@([A-Za-z][\w'’\-]*)/g, (m, name) => { out.who = canonPerson(name); return ' '; });
   const wm = s.match(/\s(?:waiting on|waiting for|wait for|waiting)\s+([A-Za-z][\w'’\-]*)/i);
   if (wm) out.waitingOn = wm[1][0].toUpperCase() + wm[1].slice(1);
   if (out.target) out.tagged = true; else out.target = findTarget(s);
@@ -937,9 +944,10 @@ function previewHTML(text, fbTarget, fbWhen, onlyIfFound){
   const rows = [];
   for (const l of lines.slice(0, 8)){
     const p = parseQuick(l);
-    if (onlyIfFound && !p.target && !p.when && !p.due && !p.waitingOn) continue;
+    if (onlyIfFound && !p.target && !p.when && !p.due && !p.waitingOn && !p.who) continue;
     const bits = [targetName(p.target || fbTarget)];
     const w = whenName(p.when || fbWhen); if (w) bits.push(w);
+    if (p.who) bits.push('for ' + p.who);
     if (p.due) bits.push('due ' + rel(p.due));
     if (p.waitingOn) bits.push('waiting on ' + p.waitingOn);
     if (p.time) bits.push(p.time);
@@ -954,6 +962,7 @@ function addParsed(line, fbTarget, fbWhen, extra0, strict){
   const extra = { ...(extra0 || {}) };
   if (p.target && p.target !== fbTarget) delete extra.milestone;
   if (p.due) extra.due = p.due;
+  if (p.who) extra.who = p.who;
   if (p.time) extra.time = p.time;
   if (p.waitingOn){ extra.status = 'waiting'; extra.waitingOn = p.waitingOn; extra.pingBy = addDays(today(), 3); }
   const when = p.when || fbWhen;
@@ -969,6 +978,7 @@ function projLabel(t){
 }
 function chipsFor(t, ctx){
   const out = [];
+  if (whoOf(t) && ctx !== 'people') out.push(`<span class="chip who" title="${esc(whoOf(t))} is doing this">👤 ${esc(whoOf(t))}</span>`);
   if (ctx !== 'proj') out.push(`<span class="chip proj"><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>`);
   if (ctx !== 'proj'){ const m = msById(t); if (m) out.push(`<span class="chip ms-chip" title="Goal: ${esc(m.name)}">⚑ ${esc(m.name)}</span>`); }
   if (t.status === 'doing') out.push(`<span class="chip doing">Doing</span>`);
@@ -1131,6 +1141,7 @@ function render(){
   else if (UI.view === 'sync') v.innerHTML = renderSync();
   else if (UI.view === 'week') v.innerHTML = renderWeek();
   else if (UI.view === 'waiting') v.innerHTML = renderWaiting();
+  else if (UI.view === 'people') v.innerHTML = renderPeople();
   else if (UI.view === 'log') v.innerHTML = renderLog();
   else if (UI.view === 'cat') v.innerHTML = renderCat();
   else if (UI.view === 'proj') v.innerHTML = renderProj();
@@ -1157,15 +1168,17 @@ function requestRender(){
 }
 
 function renderSide(){
-  const open = tasks().filter(isOpen);
-  const wk = open.filter(t => effWeek(t) === curWeek()).length;
+  const open = tasks().filter(isOpen), openMine = open.filter(mine);
+  const wk = openMine.filter(t => effWeek(t) === curWeek()).length;
+  const othersN = open.length - openMine.length;
   const waiting = open.filter(t => t.status === 'waiting');
   const due = waiting.filter(pingDue).length;
   let h = `<div class="brand">Todo List</div>${syncPill()}
     <button class="nav ${UI.view==='add'?'on':''}" data-act="nav" data-v="add"><span class="ic">+</span>Quick add</button>
-    <button class="nav ${UI.view==='today'?'on':''}" data-act="nav" data-v="today"><span class="ic">☀</span>Today<span class="ct">${(open.filter(t => effDay(t) === today()).length + allSteps().filter(({t,c}) => !c.done && isOpen(t) && sDay(c) === today() && effDay(t) !== today()).length)||''}</span></button>
+    <button class="nav ${UI.view==='today'?'on':''}" data-act="nav" data-v="today"><span class="ic">☀</span>Today<span class="ct">${(openMine.filter(t => effDay(t) === today()).length + allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sDay(c) === today() && effDay(t) !== today()).length)||''}</span></button>
     <button class="nav ${UI.view==='week'&&UI.week===curWeek()?'on':''}" data-act="nav" data-v="week"><span class="ic">◷</span>This week<span class="ct">${wk||''}</span></button>
     <button class="nav ${UI.view==='waiting'?'on':''}" data-act="nav" data-v="waiting"><span class="ic">⏳</span>Waiting on others<span class="ct ${due?'hot':''}">${due ? due+' to ping' : (waiting.length||'')}</span></button>
+    <button class="nav ${UI.view==='people'?'on':''}" data-act="nav" data-v="people"><span class="ic">👤</span>People<span class="ct">${othersN||''}</span></button>
     <button class="nav ${UI.view==='board'?'on':''}" data-act="nav" data-v="board"><span class="ic">▦</span>Board</button>
     <button class="nav ${UI.view==='inbox'?'on':''}" data-act="nav" data-v="inbox"><span class="ic">▤</span>Inbox<span class="ct">${open.filter(t => !taskCat(t)).length||''}</span></button>
     <button class="nav ${UI.view==='log'?'on':''}" data-act="nav" data-v="log"><span class="ic">≡</span>Weekly log</button>
@@ -1213,7 +1226,7 @@ function renderSetup(){
 
 function quickAdd(whenOptions){
   return `<div class="qadd">
-    <input id="qa-text" placeholder="Add a task, then press Enter" data-enter="qa-add" autocomplete="off">
+    <input id="qa-text" placeholder="Add a task" data-enter="qa-add" autocomplete="off">
     <select id="qa-target" aria-label="Project">${targetOptions(defaultTarget())}</select>
     ${whenOptions ? `<select id="qa-when" aria-label="When">${whenOptions}<option value="pick">Pick a date…</option></select><input type="date" id="qa-date" class="qa-date" aria-label="Date" hidden>` : ''}
     <button class="btn pri" data-act="qa-add">Add</button>
@@ -1223,14 +1236,14 @@ function quickAdd(whenOptions){
 function renderWeek(){
   const W = UI.week, cw = curWeek(), td = today();
   const isCur = W === cw, isPast = W < cw;
-  const all = tasks();
+  const all = tasks().filter(mine);
 
   // Week list: open tasks whose effective week is W, plus done tasks that were planned for W
   const planned = all.filter(t => isOpen(t) ? effWeek(t) === W : (t.weeks||[]).includes(W) && t.doneDate && weekOf(t.doneDate) === W);
   const carried = isPast ? all.filter(t => (t.weeks||[]).includes(W) && !(t.doneDate && weekOf(t.doneDate) === W)) : [];
   const doneW = all.filter(t => t.status === 'done' && t.doneDate && weekOf(t.doneDate) === W);
-  const stepsW = isPast ? [] : allSteps().filter(({t,c}) => !c.done && sWeek(c) === W && !(isOpen(t) && effWeek(t) === W));
-  const stepsDoneW = allSteps().filter(({c}) => c.done && c.doneDate && weekOf(c.doneDate) === W);
+  const stepsW = isPast ? [] : allSteps().filter(({t,c}) => mine(t) && !c.done && sWeek(c) === W && !(isOpen(t) && effWeek(t) === W));
+  const stepsDoneW = allSteps().filter(({t,c}) => mine(t) && c.done && c.doneDate && weekOf(c.doneDate) === W);
   const openN = planned.filter(isOpen).length + stepsW.length;
 
   let whenOpts = '';
@@ -1265,7 +1278,8 @@ function renderWeek(){
   }
 
   if (!isPast) h += `<div class="o-qa" style="margin-top:16px">${quickAdd(whenOpts)}</div>`;
-  if (!isPast){ const asOf = isCur ? td : addDays(W, 6); h += deadlinesSec(all.filter(t => surfaced(t, asOf) && effWeek(t) !== W), 'o-due'); }
+  if (!isPast){ const asOf = isCur ? td : addDays(W, 6); h += deadlinesSec(all.filter(t => surfaced(t, asOf) && effWeek(t) !== W), 'o-due');
+    h += peopleSec(tasks().filter(t => !mine(t) && isOpen(t) && (surfaced(t, asOf) || effWeek(t) === W)), 'o-due'); }
 
   // Week list
   h += `<div class="sec o-list"><div class="sec-h"><h2>${isPast ? 'Planned' : 'To do this week'}</h2><span class="n">${planned.length + stepsW.length + (isPast?carried.filter(t=>!planned.includes(t)).length:0)}</span><span class="spacer"></span></div>
@@ -1293,7 +1307,7 @@ function renderWeek(){
     const d = addDays(W,i);
     const items = all.filter(t => isOpen(t) ? effDay(t) === d : t.doneDate === d);
     sortTasks(items);
-    const dSteps = allSteps().filter(({t,c}) => c.done ? c.doneDate === d : (isOpen(t) && sDay(c) === d));
+    const dSteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === d : (isOpen(t) && sDay(c) === d)));
     const cls = d === td ? 'today' : d < td ? 'past' : '';
     h += `<div class="day ${cls} ${items.length||dSteps.length?'':'noitems'}" data-drop="${d}"><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${DOW[i]}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}</div><div class="day-list">`;
     if (!items.length && !dSteps.length) h += `<div class="day-empty">${d < td ? '' : 'Drop a task here'}</div>`;
@@ -1318,7 +1332,7 @@ function renderWeek(){
   // Notes
   const wk = M.weeks.get('w-' + W);
   h += `<div class="sec o-notes"><div class="sec-h"><h2>Week notes</h2><span class="n">meetings, small wins, anything that wasn’t a task</span></div>
-    <textarea class="notes" id="wk-notes" data-wk="${W}" placeholder="Write notes for this week…">${esc(wk?.note || '')}</textarea></div></div>`;
+    <textarea class="notes" id="wk-notes" data-wk="${W}" placeholder="Notes">${esc(wk?.note || '')}</textarea></div></div>`;
   return h;
 }
 function accList(list, steps){
@@ -1336,10 +1350,10 @@ function accList(list, steps){
 
 function renderToday(){
   const td = today(), D = UI.day || td, isPast = D < td, isToday = D === td;
-  const all = tasks();
+  const all = tasks().filter(mine);
   const planned = all.filter(t => isOpen(t) ? effDay(t) === D : t.doneDate === D);
   const openP = sortTasks(planned.filter(isOpen)), doneP = planned.filter(t => !isOpen(t));
-  const daySteps = allSteps().filter(({t,c}) => c.done ? c.doneDate === D : (isOpen(t) && sDay(c) === D));
+  const daySteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === D : (isOpen(t) && sDay(c) === D)));
   const flatSteps = daySteps.filter(x => !openP.includes(x.t));
   const flatOpen = flatSteps.filter(x => !x.c.done), flatDone = flatSteps.filter(x => x.c.done);
   const totalN = planned.length + daySteps.length, doneN = doneP.length + daySteps.filter(x => x.c.done).length;
@@ -1379,9 +1393,10 @@ function renderToday(){
   }
   left += `</div></div>`;
   if (!isPast) left += deadlinesSec(all.filter(t => surfaced(t, D) && effDay(t) !== D));
+  if (!isPast) left += peopleSec(tasks().filter(t => !mine(t) && isOpen(t) && (surfaced(t, D) || (effDay(t) && effDay(t) <= D))));
   const dn = M.weeks.get('d-' + D);
   left += `<div class="sec"><div class="sec-h"><h2>Notes for the day</h2><span class="n">time blocks, reminders, how it went</span></div>
-    <textarea class="notes" id="day-notes" data-day="${D}" placeholder="2–4 in the lab&#10;after 5: answer emails&#10;remember to bring the adapters">${esc(dn?.note || '')}</textarea></div>`;
+    <textarea class="notes" id="day-notes" data-day="${D}" placeholder="Notes">${esc(dn?.note || '')}</textarea></div>`;
 
   if (isPast) return h + left;
   return h + `<div class="today-grid"><div>${left}</div><div class="picker">${renderPicker(D)}</div></div>`;
@@ -1393,17 +1408,41 @@ function deadlinesSec(list, cls){
   return `<div class="sec ${cls||''}"><div class="sec-h"><h2>Deadlines coming up</h2><span class="n">${list.length}</span><span class="spacer"></span><span class="n">${defLead() ? esc(leadLabel(defLead())) + ' ahead' : 'on the day'}</span></div>
     <div class="card">${list.map(t => taskRowOnly(t, 'due')).join('')}</div></div>`;
 }
+function peopleSec(list, cls){
+  if (!list.length) return '';
+  const groups = new Map();
+  for (const t of sortTasks(list)){ const w = whoOf(t); if (!groups.has(w)) groups.set(w, []); groups.get(w).push(t); }
+  let h = `<div class="sec ${cls||''}"><div class="sec-h"><h2>People</h2><span class="n">${list.length}</span><span class="spacer"></span><button class="q" data-act="nav" data-v="people">All people ›</button></div><div class="card">`;
+  for (const [w, ts] of [...groups].sort((a,b) => a[0].localeCompare(b[0]))) h += `<div class="grp"><div class="grp-h">👤 ${esc(w)}<span class="n">${ts.length}</span></div>${ts.map(t => taskRowOnly(t, 'people')).join('')}</div>`;
+  return h + `</div></div>`;
+}
+function renderPeople(){
+  const ps = people(), td = today(), cut = addDays(td, -14);
+  let h = `<div class="head"><h1>People</h1></div>
+    <div class="sub">Tasks students and collaborators are doing that you keep track of. Set <b>Who</b> on any task, or type <code>@Name</code> when adding one. Their tasks stay in your projects and goals, but not in your own Today and This week lists.</div>`;
+  if (!ps.length) return h + `<div class="card"><div class="empty">No one yet. Open a task and fill in Who, or add one like <code>run simulations @Alex #grant by friday</code>.</div></div>`;
+  ps.forEach((p, i) => {
+    const ts = tasks().filter(t => whoOf(t).toLowerCase() === p.toLowerCase());
+    const open = sortTasks(ts.filter(isOpen)), done = ts.filter(t => !isOpen(t) && (t.doneDate || '') >= cut).sort((a,b) => a.doneDate < b.doneDate ? 1 : -1);
+    const late = open.filter(t => effDue(t) && effDue(t) < td).length;
+    h += `<div class="sec"><div class="sec-h"><h2>👤 ${esc(p)}</h2><span class="n">${open.length} open${late ? `, <span style="color:var(--danger)">${late} overdue</span>` : ''}${done.length ? `, ${done.length} done in the last 2 weeks` : ''}</span></div><div class="card">`;
+    h += open.length ? open.map(t => taskRowOnly(t, 'people')).join('') : `<div class="empty">Nothing open.</div>`;
+    if (done.length) h += `<div class="grp"><div class="grp-h">Done recently<span class="n">${done.length}</span></div>${done.map(t => taskRowOnly(t, 'people')).join('')}</div>`;
+    h += `<input class="ms-qadd" id="padd-${i}" data-padd="${esc(p)}" placeholder="Add a task for ${esc(p)}" enterkeyhint="enter" autocomplete="off"></div></div>`;
+  });
+  return h;
+}
 function renderPicker(D){
   const isToday = D === today(), label = isToday ? 'Today' : DOW[(parse(D).getDay()+6)%7];
   const q = UI.pickQ.trim().toLowerCase();
-  const cand = tasks().filter(t => isOpen(t) && (effDay(t) !== D || stepsOf(t).some(c => !c.done && sDay(c) !== D)) && !(effDay(t) === D));
+  const cand = tasks().filter(t => mine(t) && isOpen(t) && (effDay(t) !== D || stepsOf(t).some(c => !c.done && sDay(c) !== D)) && !(effDay(t) === D));
   const match = t => !q || (t.title + ' ' + projLabel(t) + ' ' + (taskCat(t)?.name || '') + ' ' + (msById(t)?.name || '')).toLowerCase().includes(q);
   const used = new Set();
   const pickSteps = t => { const ss = stepsOf(t).filter(c => !c.done && sDay(c) !== D); return ss.length ? `<div class="steps">${ss.map(c => `<div class="step"><button class="schk" data-act="step-toggle" data-id="${t.id}" data-s="${c.id}" aria-label="Mark step done"></button><div class="st-main" data-act="open" data-id="${t.id}"><span class="st-text">${esc(c.text)}</span></div><button class="q add" data-act="step-day" data-id="${t.id}" data-s="${c.id}">+ ${label}</button></div>`).join('')}</div>` : ''; };
   const row = (t, flat) => `<div class="pk ${flat?'flat':''}"><div class="t-main"><div class="t-title" data-act="open" data-id="${t.id}">${esc(t.title)}</div><div class="chips" data-act="open" data-id="${t.id}">${chipsFor(t, flat ? 'pick' : 'proj')}</div>${pickSteps(t)}</div>${effDay(t) === D ? '' : `<button class="q add" data-act="pick" data-id="${t.id}">+ ${label}</button>`}</div>`;
 
   let h = `<div class="sec-h" style="margin-top:0"><h2>Pick for ${isToday ? 'today' : label}</h2><span class="n">from your projects and goals</span></div>
-    <div class="card"><input class="pk-search" id="pick-q" placeholder="Search tasks, projects, goals…" value="${esc(UI.pickQ)}" autocomplete="off">`;
+    <div class="card"><input class="pk-search" id="pick-q" placeholder="Search" value="${esc(UI.pickQ)}" autocomplete="off">`;
 
   const attn = cand.filter(t => match(t) && pingDue(t));
   attn.forEach(t => used.add(t.id));
@@ -1411,7 +1450,7 @@ function renderPicker(D){
 
   const wk = cand.filter(t => match(t) && !used.has(t.id) && effWeek(t) === weekOf(D));
   wk.forEach(t => used.add(t.id));
-  const wkSteps = allSteps().filter(({t,c}) => !c.done && isOpen(t) && sWeek(c) === weekOf(D) && sDay(c) !== D && !used.has(t.id) && (!q || (c.text + ' ' + t.title + ' ' + projLabel(t)).toLowerCase().includes(q)));
+  const wkSteps = allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sWeek(c) === weekOf(D) && sDay(c) !== D && !used.has(t.id) && (!q || (c.text + ' ' + t.title + ' ' + projLabel(t)).toLowerCase().includes(q)));
   if (wk.length || wkSteps.length) h += `<div class="pk-sec"><div class="pk-h">On this week’s list<span class="n">${wk.length + wkSteps.length}</span></div>${sortTasks(wk).map(t => row(t, true)).join('')}${wkSteps.map(({t,c}) => `<div class="pk flat"><div class="t-main" data-act="open" data-id="${t.id}"><div class="t-title">${esc(c.text)}</div><div class="st-ctx">↳ ${esc(t.title)}${projById(t.project) ? ', ' + esc(projById(t.project).name) : ''}</div></div><button class="q add" data-act="step-day" data-id="${t.id}" data-s="${c.id}">+ ${label}</button></div>`).join('')}</div>`;
 
   let body = '';
@@ -1451,6 +1490,7 @@ function renderPicker(D){
 
 function kcard(t, showProj){
   const meta = [];
+  if (whoOf(t)) meta.push(`<span class="chip who">👤 ${esc(whoOf(t))}</span>`);
   if (showProj) meta.push(`<span class="chip proj"><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>`);
   if (t.status === 'doing') meta.push(`<span class="chip doing">Doing</span>`);
   if (t.status === 'waiting') meta.push(`<span class="chip wait">⏳ ${esc(t.waitingOn || 'Waiting')}</span>` + (t.pingBy ? `<span class="chip mono ${pingDue(t)?'late':''}">ping ${rel(t.pingBy)}</span>` : ''));
@@ -1518,7 +1558,7 @@ function renderBoard(){
           <div class="kcol-t"><span class="nm" data-act="nav" data-v="proj" data-id="${p.id}">${esc(p.name)}</span><span class="n">${open.length}</span></div>
           ${cur ? `<div class="kcol-g"><span class="ms-bar"><i style="width:${cs.total?Math.round(100*cs.done/cs.total):0}%"></i></span><b title="${esc(cur.name)}">⚑ ${esc(cur.name)}</b></div>` : ''}
         </div>
-        <div class="kcol-b">${body}<input class="kc-add" id="kadd-${p.id}" data-kadd="${p.id}" data-ms="${cur ? cur.id : ''}" placeholder="+ Add task${cur ? ' to current goal' : ''}"></div></div>`;
+        <div class="kcol-b">${body}<input class="kc-add" id="kadd-${p.id}" data-kadd="${p.id}" data-ms="${cur ? cur.id : ''}" placeholder="+ Add task"></div></div>`;
     }
     const loose = sortTasks(all.filter(t => isOpen(t) && taskCat(t)?.id === c.id && !projById(t.project)));
     if (loose.length) cols += `<div class="kcol"><div class="kcol-h"><div class="kcol-t">No project<span class="n">${loose.length}</span></div></div>
@@ -1569,7 +1609,7 @@ function renderSync(){
 }
 
 function deadlineSettings(){
-  const a = calAlerts(), n = tasks().filter(t => isOpen(t) && effDue(t)).length;
+  const a = calAlerts(), n = tasks().filter(t => isOpen(t) && effDue(t) && (a.people || mine(t))).length;
   const ck = (k, l) => `<label class="ck"><input type="checkbox" data-set="${k}" ${a[k]?'checked':''}> ${l}</label>`;
   return `<div class="card" style="padding:16px 18px;max-width:640px;margin-top:14px">
       <div class="sec-h" style="margin:0 0 10px"><h2>Deadlines &amp; calendar</h2><span class="n">synced to all your devices</span></div>
@@ -1579,6 +1619,7 @@ function deadlineSettings(){
       </div>
       <div class="lbl" style="margin-top:12px">Calendar alerts</div>
       <div class="set-row">${ck('start','When it starts showing')}${ck('week','1 week before')}${ck('day','1 day before')}${ck('on','On the day')}</div>
+      <div class="set-row">${ck('people','Include deadlines of tasks other people are doing (labelled with their name)')}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn pri" data-act="cal-all">Download calendar (.ics)</button><span class="meta" style="align-self:center;font-size:12px;color:var(--muted)">${n} open ${n === 1 ? 'task has' : 'tasks have'} a deadline</span></div>
       <div class="hint">Each task can override when it starts showing, in its own Deadline settings. The calendar file adds every open deadline as an all-day event with these alerts; open it and your Calendar app will remind you even when this app is closed. It’s a snapshot, so download it again after adding or moving deadlines. Events keep the same IDs, but some calendar apps still add a second copy, so importing into a separate calendar (for example “Todo deadlines”) makes it easy to clear and re-import. On iPhone, do this from Safari rather than the home-screen app.</div>
     </div>`;
@@ -1598,7 +1639,7 @@ function buildIcs(list){
   for (const t of list){
     L.push('BEGIN:VEVENT', 'UID:' + t.id + '@todo-list', 'DTSTAMP:' + stampNow,
       'DTSTART;VALUE=DATE:' + effDue(t).replace(/-/g,''), 'DTEND;VALUE=DATE:' + addDays(effDue(t), 1).replace(/-/g,''),
-      'SUMMARY:' + icsEsc('Due: ' + t.title), 'DESCRIPTION:' + icsEsc(projLabel(t) + '\n' + url), 'URL:' + url, 'TRANSP:TRANSPARENT');
+      'SUMMARY:' + icsEsc('Due: ' + (whoOf(t) ? whoOf(t) + ': ' : '') + t.title), 'DESCRIPTION:' + icsEsc(projLabel(t) + '\n' + url), 'URL:' + url, 'TRANSP:TRANSPARENT');
     const days = new Set();
     if (a.start) days.add(leadOf(t)); if (a.week) days.add(7); if (a.day) days.add(1); if (a.on) days.add(0);
     for (const n of [...days].sort((x,y) => y - x)){
@@ -1611,7 +1652,7 @@ function buildIcs(list){
   return L.map(icsFold).join('\r\n') + '\r\n';
 }
 function calExport(){
-  const list = tasks().filter(t => isOpen(t) && effDue(t));
+  const list = tasks().filter(t => isOpen(t) && effDue(t) && (calAlerts().people || mine(t)));
   if (!list.length){ showNote('No open tasks have a deadline yet. Set one in a task’s Deadline field.'); return; }
   downloadFile('todo-deadlines.ics', buildIcs(list), 'text/calendar');
 }
@@ -1619,11 +1660,11 @@ function renderAdd(){
   const recent = UI.recent.map(id => M.tasks.get(id)).filter(Boolean);
   return `<div class="cap">
     <h1>Quick add</h1>
-    <div class="sub" style="margin-bottom:12px">One task per line. It lands in today’s list unless you say otherwise.</div>
-    <textarea id="cap-text" placeholder="email Sam tomorrow about travel&#10;ping Alex friday, waiting on Alex&#10;draft slides 2-4pm" autocomplete="off" autocapitalize="sentences"></textarea>
+    <div class="sub" style="margin-bottom:12px">One task per line. Tasks go on today’s list unless you say otherwise.</div>
+    <textarea id="cap-text" placeholder="Add tasks, one per line" autocomplete="off" autocapitalize="sentences"></textarea>
     <div class="prev" id="cap-prev"></div>
     <div class="row"><button class="btn pri" data-act="cap-add">Add</button>${ready ? `<button class="btn" data-act="nav" data-v="week">Open this week</button>` : `<span class="sub" style="margin:0">Connecting…</span>`}</div>
-    <div class="hint">Picked up automatically: <code>today</code>, <code>tomorrow</code>, <code>friday</code>, <code>on wed</code>, <code>next week</code>, <code>by friday</code> for a deadline, dates like <code>nov 20</code>, <code>on 12/3</code> or <code>by dec 15</code>, a project or category name, or a tag like <code>#my-project</code>, <code>2-4pm</code> or <code>at 3</code> for a time, and <code>waiting on Sam</code>. Anything without a project goes to the Inbox.</div>
+    <div class="hint">Shortcuts: <code>tomorrow</code>, <code>fri</code>, <code>nov 20</code>, <code>by dec 15</code> (deadline), <code>2-4pm</code>, <code>#project</code>, <code>@name</code>, <code>waiting on Sam</code>. Tasks without a project go to the Inbox.</div>
     ${recent.length ? `<div class="sec"><div class="sec-h"><h2>Just added</h2><span class="n">${recent.length}</span></div><div class="card">${recent.map(t => taskRow(t,'add')).join('')}</div></div>` : ''}
   </div>`;
 }
@@ -1746,7 +1787,7 @@ function renderProj(){
       </div>`;
     if (expanded){
       h += openT.length ? statusSections(openT, 'proj') : `<div class="empty" style="padding:14px">${m.done ? 'All tasks finished.' : 'No open tasks for this goal yet. Add one below, or drag tasks here.'}</div>`;
-      if (!m.done) h += `<input class="ms-qadd" id="ms-qa-${m.id}" data-kadd="${p.id}" data-ms="${m.id}" placeholder="Add a task to this goal, then press Enter" enterkeyhint="enter" autocomplete="off" aria-label="Add a task to ${esc(m.name)}">`;
+      if (!m.done) h += `<input class="ms-qadd" id="ms-qa-${m.id}" data-kadd="${p.id}" data-ms="${m.id}" placeholder="Add a task" enterkeyhint="enter" autocomplete="off" aria-label="Add a task to ${esc(m.name)}">`;
       if (doneT.length){
         const show = UI.openMs.has('d:' + m.id);
         h += `<div class="ms-foot"><button data-act="ms-showdone" data-id="${m.id}">${show ? 'Hide' : 'Show'} ${doneT.length} done</button></div>`;
@@ -1759,11 +1800,11 @@ function renderProj(){
     h += `</div>`;
   });
 
-  h += `<div class="ms-add"><input id="ms-new" placeholder="${mss.length ? 'Add the next goal' : 'Add a goal or milestone to group tasks into stages'}" data-enter="ms-add"><button class="btn" data-act="ms-add">Add goal</button></div>`;
+  h += `<div class="ms-add"><input id="ms-new" placeholder="Add a goal" data-enter="ms-add"><button class="btn" data-act="ms-add">Add goal</button></div>`;
 
   const loose = open.filter(t => !mss.some(m => m.id === t.milestone));
   h += `<div class="sec"><div class="sec-h"><h2>${mss.length ? 'Other tasks' : 'Tasks'}</h2><span class="n">${loose.length} open</span></div>
-    <div class="card" data-drop-ms="">${loose.length ? statusSections(loose, 'proj') : `<div class="empty">${mss.length ? 'Tasks not tied to a goal show here.' : 'No open tasks. Add the steps for this project above.'}</div>`}${mss.length ? `<input class="ms-qadd" id="ms-qa-none-${p.id}" data-kadd="${p.id}" placeholder="Add a task without a goal, then press Enter" enterkeyhint="enter" autocomplete="off">` : ''}</div></div>`;
+    <div class="card" data-drop-ms="">${loose.length ? statusSections(loose, 'proj') : `<div class="empty">${mss.length ? 'Tasks not tied to a goal show here.' : 'No open tasks. Add the steps for this project above.'}</div>`}${mss.length ? `<input class="ms-qadd" id="ms-qa-none-${p.id}" data-kadd="${p.id}" placeholder="Add a task" enterkeyhint="enter" autocomplete="off">` : ''}</div></div>`;
   h += doneSection(list.filter(t => !mss.some(m => m.id === t.milestone)), 'proj');
   return h;
 }
@@ -1794,6 +1835,7 @@ function renderDrawer(){
           <span class="meta">${t.pingCount ? `Pinged ${t.pingCount}× so far, last ${rel(t.lastPing)}` : 'Not pinged yet'}</span>
         </div></div>` : ''}
       <div class="grid2">
+        <label class="fld"><span class="lbl">Who</span><input id="d-whois" list="people-list" value="${esc(whoOf(t))}" placeholder="Me" autocomplete="off" data-field="who"><datalist id="people-list">${people().map(p => `<option value="${esc(p)}">`).join('')}</datalist></label>
         <label class="fld"><span class="lbl">Project</span><select id="d-target" data-field="target">${targetOptions(target)}</select></label>
         ${msList(projById(t.project)).length ? `<label class="fld" style="grid-column:1/-1"><span class="lbl">Goal</span><select id="d-ms" data-field="milestone"><option value="">No goal</option>${msList(projById(t.project)).map(m => `<option value="${m.id}" ${t.milestone===m.id?'selected':''}>${m.done?'✓ ':'⚑ '}${esc(m.name)}</option>`).join('')}</select></label>` : ''}
         <label class="fld"><span class="lbl">Deadline</span><input type="date" id="d-due" value="${t.due}" data-field="due"></label>
@@ -1813,9 +1855,9 @@ function renderDrawer(){
           <input type="text" id="d-cl-${c.id}" value="${esc(c.text)}" data-cl="${i}">
           ${c.done ? '' : `<button class="q ${sDay(c)===today()?'on':''}" data-act="step-day" data-id="${t.id}" data-s="${c.id}">Today</button><button class="q ${sWeek(c)===curWeek()?'on':''}" data-act="step-week" data-id="${t.id}" data-s="${c.id}">Week</button>${stepDateBtn(t, c, 'dsd-')}`}
           <button class="x" data-act="cl-del" data-i="${i}" aria-label="Remove">×</button></div>`).join('')}
-        <input class="cl-add" id="d-cl-new" placeholder="Add a step, then press Enter" data-enter="cl-add">
+        <input class="cl-add" id="d-cl-new" placeholder="Add a step" data-enter="cl-add">
       </div>
-      <label><span class="lbl">Notes</span><textarea class="dr-notes" id="d-notes" data-field="notes" placeholder="Links, email subjects, who said what…">${esc(t.notes)}</textarea></label>
+      <label><span class="lbl">Notes</span><textarea class="dr-notes" id="d-notes" data-field="notes" placeholder="Notes">${esc(t.notes)}</textarea></label>
       <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--muted)">
         <span>Added ${short(t.created.slice(0,10))}${t.doneDate ? ', done ' + short(t.doneDate) : ''}</span>
         <button class="btn warn ${UI.armed===armKey?'armed':''}" data-act="del-task" data-id="${t.id}">${UI.armed===armKey?'Confirm delete':'Delete task'}</button>
@@ -1964,6 +2006,14 @@ document.addEventListener('keydown', e => {
       el.value = ''; render(); document.getElementById(el.id)?.focus();
       if (nt.project !== el.dataset.kadd) showNote('Added “' + nt.title + '” to ' + projLabel(nt) + ' (from the #tag).');
     }
+    else if (e.target.dataset?.padd){
+      e.preventDefault();
+      const el = e.target, v = el.value.trim(); if (!v) return;
+      const nt = addParsed(v, '', 'none', { who: el.dataset.padd });
+      if (!whoOf(nt)) { nt.who = el.dataset.padd; saveTask(nt); }
+      el.value = ''; render(); document.getElementById(el.id)?.focus();
+      showNote('Added “' + nt.title + '” for ' + whoOf(nt) + ' in ' + projLabel(nt) + '.');
+    }
     else if (k === 'cl-add'){ e.preventDefault(); clAdd(); }
     else if (e.target.id === 'd-title'){ e.preventDefault(); e.target.blur(); }
     else if (e.target.id === 'time-edit'){ e.preventDefault(); saveTimeEdit(e.target); }
@@ -2020,6 +2070,7 @@ document.addEventListener('change', e => {
   else if (f === 'lead'){ const n = leadNum(el.value); t.lead = n ?? ''; saveTask(t); }
   else if (f === 'day'){ if (el.value) setWhen(t, el.value); else { t.day = ''; } saveTask(t); }
   else if (f === 'week'){ if (el.value){ t.day = (t.day && weekOf(t.day) === el.value) ? t.day : ''; t.week = el.value; if (!t.weeks.includes(el.value)) t.weeks.push(el.value); } else { t.day=''; t.week=''; } saveTask(t); }
+  else if (f === 'who'){ const v = canonPerson(el.value); if (whoOf(t) !== v){ t.who = v; saveTask(t); } }
   else if (['waitingOn','pingBy','due','notes'].includes(f)){ const v = f==='waitingOn'||f==='notes' ? el.value.trim() : el.value; if (t[f] !== v){ t[f] = v; saveTask(t); } }
   render();
 });
