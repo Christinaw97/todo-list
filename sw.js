@@ -1,6 +1,6 @@
 // Todo List service worker: keeps the app usable offline.
 // Bump VERSION whenever you upload a new index.html so phones pick it up.
-const VERSION = 'todo-v4';
+const VERSION = 'todo-v5';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

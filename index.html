@@ -123,6 +123,7 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .qadd{display:flex;gap:8px;flex-wrap:wrap;padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
 .qadd input{flex:1 1 260px;min-width:0;border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:var(--panel);outline:none}
 .qadd input:focus{border-color:var(--accent)}
+.qadd input.qa-date{flex:0 0 auto;padding:6px 8px}
 .qadd select{border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--panel);max-width:220px}
 
 /* Follow-ups */
@@ -845,11 +846,29 @@ function extractTime(s){
   return { text: out, time: found };
 }
 const DATE_WORDS = '(today|tonight|tomorrow|tmrw?|tmr|next week|this week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues?|wed|thu(?:rs?)?|fri|sat|sun)';
+const MONTH_RE = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+function mkDate(y, m, d, td){
+  if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return '';
+  const yy = y ? (y < 100 ? 2000 + y : y) : +td.slice(0,4);
+  let s = ymd(new Date(yy, m - 1, d));
+  if (parse(s).getDate() !== d) return '';
+  if (!y && s < td) s = ymd(new Date(yy + 1, m - 1, d));
+  return s;
+}
 function parseQuick(raw){
   let s = ' ' + raw.replace(/^\s*[-*•]\s*/, '').trim() + ' ';
   const out = { title:'', target:'', when:'', due:'', waitingOn:'' };
   s = s.replace(/\s#([\w\-.]+)/g, (m, tag) => { const t = findTarget(tag.replace(/[-_.]/g, ' ')); if (t){ out.target = t; return ' '; } return m; });
   const td = today(), tidx = (parse(td).getDay() + 6) % 7;
+  const putDate = (pre, v) => { pre = (pre || '').toLowerCase(); if (pre === 'due' || pre === 'by') out.due = v; else out.when = v === td ? 'today' : v; };
+  s = s.replace(new RegExp('\\s(?:(due|by|on)\\s+)?' + MONTH_RE + '\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?(?=[\\s.,;:!?])', 'gi'), (m, pre, mon, d, y) => {
+    if (/^may$/i.test(mon) && !pre) return m;
+    const v = mkDate(y ? +y : 0, ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(mon.slice(0,3).toLowerCase()) + 1, +d, td);
+    if (!v) return m; putDate(pre, v); return ' ';
+  });
+  s = s.replace(/\s(due|by|on)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{4}|\d{2}))?(?=[\s.,;:!?])/gi, (m, pre, mo, d, y) => {
+    const v = mkDate(y ? +y : 0, +mo, +d, td); if (!v) return m; putDate(pre, v); return ' ';
+  });
   const re = new RegExp('\\s(?:(due|by|on)\\s+)?' + DATE_WORDS + '(?=[\\s.,;:!?])', 'gi');
   s = s.replace(re, (m, pre, word) => {
     const w = word.toLowerCase();
@@ -884,6 +903,7 @@ function whenName(w){
   if (w === 'today') return 'today';
   if (w === 'week') return 'this week';
   if (w === 'nextweek') return 'next week';
+  if (w === 'pick') return '';
   return rel(w);
 }
 function splitLines(text){ return text.split(/\n/).map(l => l.replace(/^\s*[-*•]\s*/, '').trim()).filter(Boolean); }
@@ -1162,7 +1182,7 @@ function quickAdd(whenOptions){
   return `<div class="qadd">
     <input id="qa-text" placeholder="Add a task, then press Enter" data-enter="qa-add" autocomplete="off">
     <select id="qa-target" aria-label="Project">${targetOptions(defaultTarget())}</select>
-    ${whenOptions ? `<select id="qa-when" aria-label="When">${whenOptions}</select>` : ''}
+    ${whenOptions ? `<select id="qa-when" aria-label="When">${whenOptions}<option value="pick">Pick a date…</option></select><input type="date" id="qa-date" class="qa-date" aria-label="Date" hidden>` : ''}
     <button class="btn pri" data-act="qa-add">Add</button>
   </div><div class="prev" id="qa-prev"></div>`;
 }
@@ -1570,7 +1590,7 @@ function renderAdd(){
     <textarea id="cap-text" placeholder="email Sam tomorrow about travel&#10;ping Alex friday, waiting on Alex&#10;draft slides 2-4pm" autocomplete="off" autocapitalize="sentences"></textarea>
     <div class="prev" id="cap-prev"></div>
     <div class="row"><button class="btn pri" data-act="cap-add">Add</button>${ready ? `<button class="btn" data-act="nav" data-v="week">Open this week</button>` : `<span class="sub" style="margin:0">Connecting…</span>`}</div>
-    <div class="hint">Picked up automatically: <code>today</code>, <code>tomorrow</code>, <code>friday</code>, <code>on wed</code>, <code>next week</code>, <code>by friday</code> for a deadline, a project or category name, or a tag like <code>#my-project</code>, <code>2-4pm</code> or <code>at 3</code> for a time, and <code>waiting on Sam</code>. Anything without a project goes to the Inbox.</div>
+    <div class="hint">Picked up automatically: <code>today</code>, <code>tomorrow</code>, <code>friday</code>, <code>on wed</code>, <code>next week</code>, <code>by friday</code> for a deadline, dates like <code>nov 20</code>, <code>on 12/3</code> or <code>by dec 15</code>, a project or category name, or a tag like <code>#my-project</code>, <code>2-4pm</code> or <code>at 3</code> for a time, and <code>waiting on Sam</code>. Anything without a project goes to the Inbox.</div>
     ${recent.length ? `<div class="sec"><div class="sec-h"><h2>Just added</h2><span class="n">${recent.length}</span></div><div class="card">${recent.map(t => taskRow(t,'add')).join('')}</div></div>` : ''}
   </div>`;
 }
@@ -1914,7 +1934,13 @@ document.addEventListener('change', e => {
   const el = e.target;
   if (el.id === 'time-edit'){ saveTimeEdit(el); return; }
   if (el.id === 'qa-target'){ UI.lastProj = el.value; lsSet('lt_lastproj', el.value); return; }
-  if (el.id === 'qa-when'){ UI.lastWhen = el.value; return; }
+  if (el.id === 'qa-when'){
+    const di = document.getElementById('qa-date');
+    if (el.value === 'pick'){ if (di){ di.hidden = false; di.focus(); try { di.showPicker(); } catch(err){} } return; }
+    if (di) di.hidden = true;
+    UI.lastWhen = el.value; return;
+  }
+  if (el.id === 'qa-date'){ const pv = document.getElementById('qa-prev'), tx = document.getElementById('qa-text'); if (pv && tx) pv.innerHTML = previewHTML(tx.value, document.getElementById('qa-target')?.value || '', qaWhen(), true); return; }
   if (el.dataset.set){
     if (!M.meta) return;
     const k = el.dataset.set;
@@ -1969,7 +1995,7 @@ document.addEventListener('input', e => {
   if (e.target.id === 'pick-q'){ UI.pickQ = e.target.value; requestRender(); }
   if (e.target.id === 'qa-text'){
     const pv = document.getElementById('qa-prev');
-    if (pv) pv.innerHTML = previewHTML(e.target.value, document.getElementById('qa-target')?.value || '', document.getElementById('qa-when')?.value || 'none', true);
+    if (pv) pv.innerHTML = previewHTML(e.target.value, document.getElementById('qa-target')?.value || '', qaWhen(), true);
   }
   if (e.target.id === 'cap-text'){
     const pv = document.getElementById('cap-prev');
@@ -2008,10 +2034,16 @@ document.addEventListener('drop', e => {
 });
 
 /* ============ Action helpers ============ */
+function qaWhen(){
+  const w = document.getElementById('qa-when')?.value || 'none';
+  if (w !== 'pick') return w;
+  return document.getElementById('qa-date')?.value || 'pick';
+}
 function qaAdd(){
   const inp = document.getElementById('qa-text'); const v = inp?.value.trim(); if (!v) return;
   const target = document.getElementById('qa-target')?.value || '';
-  let when = document.getElementById('qa-when')?.value || 'none';
+  let when = qaWhen();
+  if (when === 'pick'){ const di = document.getElementById('qa-date'); if (di){ di.hidden = false; di.focus(); } showNote('Choose a date first, or pick another option.'); return; }
   if (UI.view === 'week' && UI.week < curWeek()) when = 'none';
   UI.lastProj = target; lsSet('lt_lastproj', target);
   const ms = document.getElementById('qa-ms')?.value || '';
