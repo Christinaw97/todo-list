@@ -332,6 +332,23 @@ textarea.notes:focus{border-color:var(--accent)}
 .st-hist summary{cursor:pointer;color:var(--accent);font-size:11.5px;width:max-content}
 .st-hist details div{font-family:var(--mono);font-size:11px;color:var(--faint);padding-left:4px}
 .arch-note{margin:4px 0 12px;padding:8px 12px;border-radius:8px;background:var(--panel2);border:1px dashed var(--line);font-size:12.5px;color:var(--muted)}
+.focus-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.focus-card{border-color:color-mix(in srgb,var(--wait) 55%,var(--line));box-shadow:inset 3px 0 0 var(--wait)}
+.fc-h{display:flex;align-items:flex-start;gap:8px;padding:10px 12px 4px 14px}
+.fc-star{color:var(--wait);font-size:15px;line-height:1.3}
+.fc-t{flex:1;font-weight:600;font-size:14px;cursor:pointer}
+.fc-sub{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+.fc-m{display:flex;align-items:center;gap:8px;padding:0 14px 6px;font-size:12px;color:var(--muted);font-family:var(--mono)}
+.fc-m .ms-bar{width:80px}
+.fc-more{padding:4px 14px 10px;font-size:12px;color:var(--accent);cursor:pointer}
+.focus-add{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.focus-add select{border:1px dashed var(--line);border-radius:8px;padding:7px 10px;background:var(--panel);color:var(--text);max-width:100%}
+.focus-strip{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0 2px;font-size:12.5px;color:var(--wait);font-weight:600}
+.chip.focus{color:var(--wait);border-color:var(--wait-line);background:var(--wait-bg)}
+.chip.mono.focus{color:var(--wait)}
+.side-star{color:var(--wait);margin-right:3px}
+.btn.focus-on{color:var(--wait);border-color:var(--wait)}
+.ms-h.focus{box-shadow:inset 3px 0 0 var(--wait)}
 .pk-more{display:block;border:0;background:none;color:var(--accent);font-size:12px;padding:4px 14px 6px 29px}
 .pk-goal{padding:4px 14px 0 29px;font-size:11.5px;color:var(--muted)}
 .pk-goal.cur{color:var(--accent);font-weight:600}
@@ -475,7 +492,7 @@ body.v-board .kcol-b > *{flex-shrink:0}
   .ditem .chk{width:18px;height:18px}
   .ditem{font-size:14px;padding:6px 10px}
   .weekv{display:flex;flex-direction:column}
-  .weekv .o-head{order:0}.weekv .o-fu{order:1}.weekv .o-due{order:1}.weekv .o-qa{order:2}.weekv .o-days{order:3}.weekv .o-list{order:4}.weekv .o-acc{order:5}.weekv .o-notes{order:6}
+  .weekv .o-head{order:0}.weekv .o-focus{order:1}.weekv .o-fu{order:1}.weekv .o-due{order:1}.weekv .o-qa{order:2}.weekv .o-days{order:3}.weekv .o-list{order:4}.weekv .o-acc{order:5}.weekv .o-notes{order:6}
   .day.past.noitems{display:none}
   .day{min-height:0}
   #fab{display:grid;place-items:center}
@@ -612,7 +629,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v26';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v27';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1063,6 +1080,7 @@ function projLabel(t){
 }
 function chipsFor(t, ctx){
   const out = [];
+  if (t.status !== 'done' && ctx !== 'proj' && taskFocus(t)) out.push(`<span class="chip focus" title="Part of this week's priorities">★</span>`);
   if (whoOf(t) && ctx !== 'people') out.push(`<span class="chip who" title="${esc(whoOf(t))} is doing this${!t.who && goalWho(t) ? ' (assigned with the goal)' : ''}">👤 ${esc(whoOf(t))}</span>`);
   if (ctx !== 'proj') out.push(`<span class="chip proj"><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>`);
   if (ctx !== 'proj'){ const m = msById(t); if (m) out.push(`<span class="chip ms-chip" title="Goal: ${esc(m.name)}">⚑ ${esc(m.name)}</span>`); }
@@ -1305,7 +1323,7 @@ function renderSide(){
     if (!col){
       for (const p of projs().filter(p => p.cat === c.id && !p.archived)){
         const pn = open.filter(t => t.project === p.id).length;
-        h += `<button class="nav proj-row ${UI.view==='proj'&&UI.proj===p.id?'on':''}" data-act="nav" data-v="proj" data-id="${p.id}"><span class="dot" style="background:${c.color}"></span>${esc(p.name)}<span class="ct">${pn||''}</span></button>`;
+        h += `<button class="nav proj-row ${UI.view==='proj'&&UI.proj===p.id?'on':''}" data-act="nav" data-v="proj" data-id="${p.id}"><span class="dot" style="background:${c.color}"></span>${isFocus('p:' + p.id) || msList(p).some(m => isFocus('g:' + p.id + '|' + m.id)) ? '<span class="side-star">★</span>' : ''}${esc(p.name)}<span class="ct">${pn||''}</span></button>`;
       }
       h += UI.adding === c.id ? sideInput(c.id) : `<button class="side-add" data-act="add-proj" data-id="${c.id}">+ Project</button>`;
     }
@@ -1390,6 +1408,8 @@ function renderWeek(){
       <button class="btn" data-act="export">Export week (.md)</button>
     </div>
     <div class="sub">${weekLabel(W)}. ${doneW.length} done${isPast ? '' : `, ${openN} open`}${carried.length ? `, ${carried.length} carried forward` : ''}.</div></div>`;
+
+  if (!isPast || focusOf(W).length) h += focusSec(W);
 
   // Follow-ups due
   if (isCur){
@@ -1504,6 +1524,7 @@ function renderToday(){
       ${!isToday ? `<button class="btn" data-act="day-now">Back to today</button>` : ''}
     </div>
     <div class="sub">${longDate}</div>
+    ${focusOf(weekOf(D)).length ? `<div class="focus-strip">★ This week: ${focusOf(weekOf(D)).map(k => `<button class="fchip on" data-act="nav" data-v="proj" data-id="${focusParts(k).p.id}">${k.startsWith('g:') ? '⚑ ' : ''}${esc(focusLabel(k))}</button>`).join('')}</div>` : ''}
     ${totalN ? `<div class="prog"><span class="bar"><i style="width:${pct}%"></i></span>${doneN} of ${totalN} done${handedN ? `, ${handedN} handed off` : ''}</div>` : ''}`;
 
   if (isToday){
@@ -1678,6 +1699,7 @@ function renderPicker(D){
     if (pingDue(t)){ score = Math.max(score, 85); why.push({ k:'late', txt:'ping ' + (t.waitingOn || 'them') }); }
     if (t.status === 'doing'){ score = Math.max(score, 75); why.push({ k:'', txt:'in progress' }); }
     if (effWeek(t) === W0){ score = Math.max(score, 70); why.push({ k:'', txt:'this week’s list' }); }
+    if (taskFocus(t)){ score = score ? score + 12 : 50; why.unshift({ k:'focus', txt:'★ priority' }); }
     if (nextUp.has(t.id)){ score = Math.max(score, 45); why.push({ k:'', txt:'next in ⚑ ' + currentMs(projById(t.project)).name }); }
     return { score, why };
   };
@@ -1940,6 +1962,43 @@ function renderWaiting(){
   return h + `</div>`;
 }
 
+// Weekly priorities: up to two projects ('p:<id>') or goals ('g:<project>|<goal>') per week, saved with the week's notes
+const FOCUS_MAX = 2;
+const focusOf = W => (weekNote(W || curWeek())?.focus || []).filter(k => focusLabel(k));
+function setFocus(W, list){ const w = weekNote(W) || { kind:'week', id:'w-' + W, note:'' }; w.focus = list; saveWeek(w); }
+function focusParts(k){ if (k.startsWith('p:')) return { p: projById(k.slice(2)) }; const [pid, mid] = k.slice(2).split('|'); const p = projById(pid); return { p, m: msList(p).find(x => x.id === mid) }; }
+function focusLabel(k){ const { p, m } = focusParts(k); if (!p || p.archived) return ''; if (k.startsWith('g:') && !m) return ''; return m ? m.name : p.name; }
+const isFocus = (k, W) => focusOf(W).includes(k);
+const taskFocus = t => !!t.project && (isFocus('p:' + t.project) || (!!t.milestone && isFocus('g:' + t.project + '|' + t.milestone)));
+function toggleFocus(k, W){
+  W = W || curWeek(); let f = focusOf(W);
+  if (f.includes(k)) f = f.filter(x => x !== k);
+  else { if (f.length >= FOCUS_MAX){ showNote('You already have two priorities this week. Remove one first.'); return; } f = [...f, k]; }
+  setFocus(W, f);
+}
+function focusTasks(k){ const { p, m } = focusParts(k); return sortTasks(tasks().filter(t => isOpen(t) && t.project === p.id && (!m || t.milestone === m.id))); }
+function focusSec(W){
+  const f = focusOf(W), isCur = W === curWeek();
+  let h = `<div class="sec o-focus"><div class="sec-h"><h2>★ Priorities</h2><span class="n">${f.length}/${FOCUS_MAX}</span><span class="spacer"></span></div>`;
+  if (f.length){
+    h += `<div class="focus-grid">` + f.map(k => {
+      const { p, m } = focusParts(k), all = tasks().filter(t => t.project === p.id && (!m || t.milestone === m.id)), done = all.filter(t => t.status === 'done').length, open = focusTasks(k);
+      const due = m ? m.due : '', c = catById(p.cat);
+      return `<div class="card focus-card"><div class="fc-h"><span class="fc-star">★</span><div class="fc-t" data-act="nav" data-v="proj" data-id="${p.id}">${m ? '⚑ ' : ''}${esc(m ? m.name : p.name)}${m ? `<span class="fc-sub">${esc(p.name)}</span>` : `<span class="fc-sub">${esc(c?.name || '')}</span>`}</div>
+        <button class="q" data-act="focus" data-k="${k}" data-w="${W}" title="Remove from this week's priorities">✕</button></div>
+        <div class="fc-m"><span class="ms-bar"><i style="width:${all.length ? Math.round(100 * done / all.length) : 0}%"></i></span>${done}/${all.length} done${due ? ` · due ${rel(due)}` : ''}</div>
+        ${open.slice(0, 3).map(t => taskRowOnly(t, 'due')).join('') || '<div class="empty" style="padding:8px 14px">No open tasks. Add some on the project page.</div>'}
+        ${open.length > 3 ? `<div class="fc-more" data-act="nav" data-v="proj" data-id="${p.id}">and ${open.length - 3} more ›</div>` : ''}</div>`;
+    }).join('') + `</div>`;
+  }
+  if (f.length < FOCUS_MAX && !(W < curWeek())){
+    const opts = [];
+    for (const p of projs().filter(p => !p.archived)){ if (!f.includes('p:' + p.id)) opts.push(`<option value="p:${p.id}">${esc(p.name)}</option>`); for (const m of msList(p).filter(m => !m.done)) if (!f.includes('g:' + p.id + '|' + m.id)) opts.push(`<option value="g:${p.id}|${m.id}">&nbsp;&nbsp;⚑ ${esc(m.name)} (${esc(p.name)})</option>`); }
+    const last = focusOf(addDays(W, -7)).filter(k => !f.includes(k));
+    h += `<div class="focus-add"><select id="focus-add" data-w="${W}"><option value="">${f.length ? 'Add another priority…' : 'Pick up to two priorities for ' + (isCur ? 'this week' : 'that week') + '…'}</option>${opts.join('')}</select>${!f.length && last.length ? `<button class="btn" data-act="focus-last" data-w="${W}">Same as last week</button>` : ''}</div>`;
+  }
+  return h + `</div>`;
+}
 function weekNote(W){
   let n = M.weeks.get('w-' + W); if (n) return n;
   for (const w of M.weeks.values()) if (w.kind === 'week' && normW(w.id.slice(2)) === W) return w;
@@ -2021,6 +2080,7 @@ function renderProj(){
   let h = `<div class="crumb">${esc(c?.name || '')}</div>
     <div class="head"><input class="title-input" id="ren-proj" value="${esc(p.name)}" data-ren="proj" data-id="${p.id}" aria-label="Project name">
     <span class="spacer"></span>
+    ${p.archived ? '' : `<button class="btn ${isFocus('p:' + p.id) ? 'focus-on' : ''}" data-act="focus" data-k="p:${p.id}" title="Highlight as one of this week's two priorities">${isFocus('p:' + p.id) ? '★ Priority this week' : '☆ Priority'}</button>`}
     <button class="btn" data-act="${p.archived ? 'proj-unarchive' : 'proj-archive'}" data-id="${p.id}" title="${p.archived ? 'Bring this project back into your lists' : 'Hide this project and its tasks from your lists without deleting anything'}">${p.archived ? 'Unarchive' : 'Archive'}</button>
     <button class="btn warn ${UI.armed===armKey?'armed':''}" data-act="del-proj" data-id="${p.id}">${UI.armed===armKey ? `Delete with ${list.length} tasks?` : 'Delete project'}</button></div>
     ${p.archived ? `<div class="arch-note">Archived${p.archivedAt ? ' on ' + short(p.archivedAt) : ''}. Its tasks are hidden from Today, This week, the board and suggestions. Nothing has been deleted.</div>` : ''}
@@ -2035,13 +2095,14 @@ function renderProj(){
     const ak = 'ms:' + m.id;
     const openT = st.list.filter(notDone), doneT = st.list.filter(t => !notDone(t));
     h += `<div class="card ms ${isCur?'current':''} ${m.done?'reached':''}" data-drop-ms="${m.id}">
-      <div class="ms-h">
+      <div class="ms-h ${isFocus('g:' + p.id + '|' + m.id) ? 'focus' : ''}">
         <span class="ms-num">${m.done ? '✓' : i + 1}</span>
         <input class="ms-name" id="ms-name-${m.id}" value="${esc(m.name)}" data-ren="ms" data-id="${m.id}" aria-label="Goal name">
         ${isCur ? '<span class="ms-tag">Current goal</span>' : m.done ? `<span class="ms-tag" style="color:var(--done)">Reached ${m.doneDate ? short(m.doneDate) : ''}</span>` : ''}
         ${m.done ? '' : `<label class="ms-due" title="Who is doing this goal; its tasks are theirs unless a task says otherwise"><span>Who</span><input id="ms-who-${m.id}" list="ms-people" data-ms-who="${m.id}" value="${esc(m.who || '')}" placeholder="Me" autocomplete="off" style="width:92px" aria-label="Who is doing this goal"></label><label class="ms-due ${m.due && m.due < today() ? 'late' : ''}" title="Deadline for the whole goal; its tasks are due by then at the latest"><span>Due</span><input type="date" id="ms-due-${m.id}" data-ms-due="${m.id}" value="${m.due || ''}" aria-label="Goal deadline"></label>`}
         <span class="ms-prog"><span class="ms-bar"><i style="width:${pct}%"></i></span>${st.done}/${st.total}</span>
         <span class="ms-tools">
+          ${m.done ? '' : `<button class="q ${isFocus('g:' + p.id + '|' + m.id) ? 'on' : ''}" data-act="focus" data-k="g:${p.id}|${m.id}" title="Highlight as one of this week's two priorities">${isFocus('g:' + p.id + '|' + m.id) ? '★' : '☆'}</button>`}
           <button class="q" data-act="ms-up" data-id="${m.id}" title="Move up" ${i===0?'disabled':''}>↑</button>
           <button class="q" data-act="ms-down" data-id="${m.id}" title="Move down" ${i===mss.length-1?'disabled':''}>↓</button>
           <button class="q ${m.done?'':'on'}" data-act="ms-done" data-id="${m.id}">${m.done ? 'Reopen' : 'Mark reached'}</button>
@@ -2201,6 +2262,8 @@ document.addEventListener('click', e => {
     case 'ord-reset': setDayOrder(el.dataset.d, []); break;
     case 'qa-tips': UI.qaTips = !UI.qaTips; break;
     case 'pick-more': UI.pickMore = !UI.pickMore; break;
+    case 'focus': toggleFocus(el.dataset.k, el.dataset.w); break;
+    case 'focus-last': { const W = el.dataset.w; setFocus(W, focusOf(addDays(W, -7)).slice(0, FOCUS_MAX)); break; }
     case 'proj-archive': { const p = projById(id); if (p){ p.archived = true; p.archivedAt = today(); saveMeta(); showNote('Archived “' + p.name + '”. You can find it under Archived in the sidebar.'); } break; }
     case 'proj-unarchive': { const p = projById(id); if (p){ p.archived = false; p.archivedAt = ''; saveMeta(); showNote('“' + p.name + '” is back in your lists.'); } break; }
     case 'ms-checked': { const m = msList(projById(el.dataset.p)).find(x => x.id === id); if (m){ m.remind = ''; saveMeta(); showNote('Check-in for “' + m.name + '” cleared.'); } break; }
@@ -2308,6 +2371,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('change', e => {
   const el = e.target;
   if (el.id === 'time-edit') return;   // saved on Enter or when the box loses focus
+  if (el.id === 'focus-add'){ if (el.value) toggleFocus(el.value, el.dataset.w); render(); return; }
   if (el.id === 'qa-target'){ UI.lastProj = el.value; lsSet('lt_lastproj', el.value); return; }
   if (el.id === 'qa-when'){
     const di = document.getElementById('qa-date');
