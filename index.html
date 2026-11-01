@@ -148,6 +148,8 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .chk:hover{border-color:var(--done)}
 .chk.doing{border-color:var(--doing);background:linear-gradient(90deg,var(--doing) 50%,transparent 50%)}
 .chk.waiting{border-color:var(--wait);border-style:dashed}
+.chk.handed{border-style:solid;background:linear-gradient(90deg,var(--wait) 50%,transparent 50%)}
+.chip.handed{color:var(--wait);border-color:var(--wait-line);background:var(--wait-bg)}
 .chk.done{border-color:var(--done);background:var(--done)}
 .t-main{flex:1;min-width:0;cursor:pointer}
 .t-title{word-break:break-word}
@@ -555,6 +557,7 @@ function msStats(p, m){ const l = tasks().filter(t => t.project === p.id && t.mi
 
 function effDay(t){
   if (t.status === 'done') return t.doneDate || '';
+  if (t.status === 'waiting' && t.handedOff) return t.handedOff === today() ? t.handedOff : '';
   if (!t.day) return '';
   const td = today();
   return t.day < td ? td : t.day;
@@ -609,7 +612,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v25';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v26';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -831,6 +834,7 @@ function setWhen(t, when){
   else { t.day = when === 'today' ? today() : when; t.week = weekOf(t.day); }
   if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week);
 }
+const handoffLine = t => short(today()) + ': did my part, now waiting' + (t.waitingOn ? ' on ' + t.waitingOn : '') + '.';
 const STATUS_NAME = { todo:'To do', doing:'Doing', waiting:'Waiting', done:'Done' };
 // The next day you planned to act on a task (its planned day, or its earliest planned open step), if it's after today
 function nextActionDay(t){
@@ -855,7 +859,16 @@ function setStatus(t, s){
   t.status = s;
   if (s === 'done') t.doneDate = today();
   else t.doneDate = '';
-  if (s === 'waiting') t.pingBy = defaultPingDay(t);
+  if (s === 'waiting'){
+    t.pingBy = defaultPingDay(t);
+    if (from !== 'done'){
+      const wasPlanned = t.day && t.day <= today();
+      t.handedOff = today();
+      if (wasPlanned) t.day = today();
+      const line = handoffLine(t);
+      t.notes = (t.notes ? t.notes.replace(/\s+$/, '') + '\n' : '') + line;
+    }
+  } else t.handedOff = '';
   logStatus(t, from, s);
   saveTask(t);
 }
@@ -1054,6 +1067,7 @@ function chipsFor(t, ctx){
   if (ctx !== 'proj') out.push(`<span class="chip proj"><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>`);
   if (ctx !== 'proj'){ const m = msById(t); if (m) out.push(`<span class="chip ms-chip" title="Goal: ${esc(m.name)}">⚑ ${esc(m.name)}</span>`); }
   if (t.status === 'doing') out.push(`<span class="chip doing">Doing</span>`);
+  if (t.status === 'waiting' && t.handedOff && ctx === 'today') out.push(`<span class="chip handed">◐ your part done</span>`);
   if (t.status === 'waiting'){
     const late = pingDue(t);
     const since = statusSince(t);
@@ -1147,7 +1161,7 @@ function taskRowOnly(t, ctx){
   const inToday = effDay(t) === today() && t.status !== 'done';
   const inWeek = effWeek(t) === w && t.status !== 'done';
   return `<div class="task ${t.status==='done'?'is-done':''}" draggable="true" data-drag="${t.id}">
-    <button class="chk ${t.status}" data-act="done" data-id="${t.id}" aria-label="${t.status==='done'?'Mark not done':'Mark done'}">${t.status==='done'?'✓':''}</button>
+    <button class="chk ${t.status} ${t.status === 'waiting' && t.handedOff ? 'handed' : ''}" data-act="done" data-id="${t.id}" aria-label="${t.status==='done'?'Mark not done':'Mark done'}" ${t.status === 'waiting' && t.handedOff ? 'title="Your part is done; waiting on someone else"' : ''}>${t.status==='done'?'✓':''}</button>
     <div class="t-main" data-act="open" data-id="${t.id}">
       <div class="t-title">${timeBit(t, null, ctx)}${esc(t.title)}</div>
       <div class="chips">${chipsFor(t, ctx)}</div>
@@ -1477,9 +1491,10 @@ function renderToday(){
   const flatSteps = daySteps.filter(x => !openP.includes(x.t));
   const flatOpen = flatSteps.filter(x => !x.c.done), flatDone = flatSteps.filter(x => x.c.done);
   const totalN = planned.length + daySteps.length, doneN = doneP.length + daySteps.filter(x => x.c.done).length;
+  const handedN = planned.filter(t => t.status === 'waiting' && t.handedOff === D).length;
   const dname = DOW[(parse(D).getDay()+6)%7];
   const title = isToday ? 'Today' : D === addDays(td,1) ? 'Tomorrow' : D === addDays(td,-1) ? 'Yesterday' : dname + ' ' + short(D);
-  const pct = totalN ? Math.round(100 * doneN / totalN) : 0;
+  const pct = totalN ? Math.round(100 * (doneN + handedN / 2) / totalN) : 0;
   const longDate = parse(D).toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
 
   let h = `<div class="head">
@@ -1489,7 +1504,7 @@ function renderToday(){
       ${!isToday ? `<button class="btn" data-act="day-now">Back to today</button>` : ''}
     </div>
     <div class="sub">${longDate}</div>
-    ${totalN ? `<div class="prog"><span class="bar"><i style="width:${pct}%"></i></span>${doneN} of ${totalN} done</div>` : ''}`;
+    ${totalN ? `<div class="prog"><span class="bar"><i style="width:${pct}%"></i></span>${doneN} of ${totalN} done${handedN ? `, ${handedN} handed off` : ''}</div>` : ''}`;
 
   if (isToday){
     const fu = all.filter(pingDue);
@@ -2356,6 +2371,15 @@ document.addEventListener('change', e => {
     const raw = el.value.trim();
     const v = /^(me|myself)$/i.test(raw) && goalWho(t) ? 'me' : canonPerson(raw);
     if ((t.who || '') !== v){ t.who = v; saveTask(t); }
+  }
+  else if (f === 'waitingOn'){
+    const v = el.value.trim();
+    if (t.waitingOn !== v){
+      const old = handoffLine(t);
+      t.waitingOn = v;
+      if (t.handedOff === today() && t.notes && t.notes.endsWith(old)) t.notes = t.notes.slice(0, -old.length) + handoffLine(t);
+      saveTask(t);
+    }
   }
   else if (['waitingOn','pingBy','due','notes'].includes(f)){ const v = f==='waitingOn'||f==='notes' ? el.value.trim() : el.value; if (t[f] !== v){ t[f] = v; saveTask(t); } }
   render();
