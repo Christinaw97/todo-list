@@ -389,6 +389,17 @@ body.v-board .kcol-b > *{flex-shrink:0}
 .kcol-b{padding:8px;display:flex;flex-direction:column;gap:6px;min-height:40px}
 .kgoal{font-size:11px;font-weight:600;color:var(--muted);padding:6px 2px 0;display:flex;gap:6px}
 .kgoal.cur{color:var(--accent)}
+.ms-meta{padding:6px 14px 8px;border-bottom:1px solid var(--line2);display:flex;flex-direction:column;gap:6px}
+.ms-desc{width:100%;border:1px solid transparent;border-radius:6px;padding:4px 6px;margin-left:-6px;background:none;color:var(--text);font:inherit;font-size:13px;line-height:1.45;resize:none;outline:none;overflow:hidden}
+.ms-desc:hover{border-color:var(--line)}
+.ms-desc:focus{border-color:var(--accent);background:var(--panel)}
+.ms-desc::placeholder{color:var(--faint)}
+.ms-rem{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;font-size:12px;color:var(--muted)}
+.ms-rem input{font-size:12px;padding:1px 4px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);outline:none}
+.ms-rem input[type=number]{width:56px}
+.ms-now{color:var(--accent)}
+.goal-row .g-flag{width:18px;text-align:center;color:var(--accent);flex-shrink:0;margin-top:1px}
+.g-desc{font-size:12px;color:var(--muted);margin:1px 0 3px}
 .kg-due{font-family:var(--mono);font-weight:400;color:var(--muted)}
 .kg-due.late{color:var(--danger)}
 .ms-due{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)}
@@ -583,7 +594,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v20';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v21';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1190,6 +1201,7 @@ function render(){
   renderDrawer();
   const dt = document.getElementById('d-title');
   if (dt){ dt.style.height = 'auto'; dt.style.height = dt.scrollHeight + 'px'; }
+  document.querySelectorAll('.ms-desc').forEach(el => { if (el.value){ el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } });
   restoreScroll(scrollSaved, viewKey === lastRenderedView);
   rendering = false;
   if (matchMedia('(hover: none) and (pointer: coarse)').matches) document.querySelectorAll('[draggable="true"]').forEach(el => el.removeAttribute('draggable'));   // touch uses press-and-hold dragging instead
@@ -1339,7 +1351,7 @@ function renderWeek(){
   }
 
   if (!isPast) h += `<div class="o-qa" style="margin-top:16px">${quickAdd(whenOpts)}</div>`;
-  if (!isPast){ const asOf = isCur ? td : addDays(W, 6); h += deadlinesSec(all.filter(t => surfaced(t, asOf) && effWeek(t) !== W), 'o-due');
+  if (!isPast){ const asOf = isCur ? td : addDays(W, 6); h += goalsSec(asOf, 'o-due'); h += deadlinesSec(all.filter(t => surfaced(t, asOf) && effWeek(t) !== W), 'o-due');
     h += peopleSec(tasks().filter(t => !mine(t) && isOpen(t) && (surfaced(t, asOf) || effWeek(t) === W)), 'o-due'); }
 
   // Week list
@@ -1465,6 +1477,7 @@ function renderToday(){
     if (doneP.length || flatDone.length) left += `<div class="grp"><div class="grp-h">Done<span class="n">${doneP.length + flatDone.length}</span></div>${doneP.map(t => taskRow(t,'today')).join('')}${flatDone.map(({t,c}) => stepRow(t, c, true, 'today')).join('')}</div>`;
   }
   left += `</div></div>`;
+  if (!isPast) left += goalsSec(D);
   if (!isPast) left += deadlinesSec(all.filter(t => surfaced(t, D) && effDay(t) !== D));
   if (!isPast) left += peopleSec(tasks().filter(t => !mine(t) && isOpen(t) && (surfaced(t, D) || (effDay(t) && effDay(t) <= D))));
   const dn = M.weeks.get('d-' + D);
@@ -1509,6 +1522,28 @@ function renderPeople(){
 // Manual order of a day's plan (keys 't:<task>' or 's:<task>|<step>'), saved with the day's notes record
 function dayOrder(D){ return M.weeks.get('d-' + D)?.order || []; }
 function setDayOrder(D, keys){ const d = M.weeks.get('d-' + D) || { kind:'day', id:'d-' + D, note:'' }; d.order = keys; saveWeek(d); }
+// Goals: show up from their lead time before the due date, or on their check-in date (until dismissed)
+const goalLead = m => leadNum(m.lead) ?? defLead();
+const goalDueSoon = (m, D) => !m.done && !!m.due && (D || today()) >= addDays(m.due, -goalLead(m));
+const goalCheckIn = (m, D) => !m.done && !!m.remind && (D || today()) >= m.remind;
+const goalSurfaced = (m, D) => goalDueSoon(m, D) || goalCheckIn(m, D);
+function allGoals(){ const out = []; for (const p of projs()) if (!p.archived) for (const m of msList(p)) out.push({ p, m }); return out; }
+function goalsSec(D, cls){
+  const list = allGoals().filter(({m}) => goalSurfaced(m, D));
+  if (!list.length) return '';
+  list.sort((a, b) => (a.m.due || a.m.remind || '9999') < (b.m.due || b.m.remind || '9999') ? -1 : 1);
+  return `<div class="sec ${cls||''}"><div class="sec-h"><h2>Goals</h2><span class="n">${list.length}</span></div><div class="card">${list.map(({p, m}) => {
+    const st = msStats(p, m), n = m.due ? dayDiff(today(), m.due) : null;
+    const chips = [`<span class="chip proj"><i style="background:${catColor({ project: p.id })}"></i>${esc(p.name)}</span>`];
+    if (m.who) chips.push(`<span class="chip who">👤 ${esc(m.who)}</span>`);
+    if (m.due) chips.push(`<span class="chip mono ${n < 0 ? 'late' : n <= 2 ? 'soon' : n <= 7 ? 'ahead' : ''}">due ${rel(m.due)}${n > 6 || n < 0 ? ' · ' + dueIn(m.due) : ''}</span>`);
+    if (goalCheckIn(m, D)) chips.push(`<span class="chip mono soon">check-in ${m.remind === today() ? 'today' : rel(m.remind)}</span>`);
+    chips.push(`<span class="chip mono">${st.done}/${st.total} tasks</span>`);
+    return `<div class="task goal-row"><span class="g-flag">⚑</span>
+      <div class="t-main" data-act="nav" data-v="proj" data-id="${p.id}"><div class="t-title">${esc(m.name)}</div>${m.desc ? `<div class="g-desc">${esc(m.desc.length > 140 ? m.desc.slice(0, 140) + '…' : m.desc)}</div>` : ''}<div class="chips">${chips.join('')}</div></div>
+      <div class="t-quick">${goalCheckIn(m, D) ? `<button class="q" data-act="ms-checked" data-p="${p.id}" data-id="${m.id}" title="Clear the check-in reminder">Done</button>` : ''}<button class="q" data-act="nav" data-v="proj" data-id="${p.id}">Open</button></div></div>`;
+  }).join('')}</div></div>`;
+}
 function unfinishedThisWeek(){
   const cw = curWeek();
   const ts = tasks().filter(t => mine(t) && isOpen(t) && effWeek(t) === cw);
@@ -1641,7 +1676,7 @@ function renderBoard(){
       for (const m of mss){
         const g = sortTasks(open.filter(t => t.milestone === m.id));
         const isCur = cur && cur.id === m.id;
-        body += `<div class="kgoal ${isCur?'cur':''}">⚑ ${esc(m.name)}${m.who ? ` <span class="kg-due">👤 ${esc(m.who)}</span>` : ''}${m.due ? `<span class="kg-due ${m.due < today() ? 'late' : ''}">due ${rel(m.due)}</span>` : ''}<span class="n">${g.length}</span></div>
+        body += `<div class="kgoal ${isCur?'cur':''}" ${m.desc ? `title="${esc(m.desc)}"` : ''}>⚑ ${esc(m.name)}${m.who ? ` <span class="kg-due">👤 ${esc(m.who)}</span>` : ''}${m.due ? `<span class="kg-due ${m.due < today() ? 'late' : ''}">due ${rel(m.due)}</span>` : ''}<span class="n">${g.length}</span></div>
           <div class="kzone" data-drop-kms="${p.id}|${m.id}">${g.map(t => kcard(t)).join('') || `<div class="kempty">No open tasks</div>`}</div>`;
       }
       const rest = sortTasks(open.filter(t => !mss.some(m => m.id === t.milestone)));
@@ -1726,7 +1761,7 @@ function icsFold(line){
   for (const ch of line){ const b = enc.encode(ch).length; if (len + b > 74){ out.push(cur); cur = ' '; len = 1; } cur += ch; len += b; }
   out.push(cur); return out.join('\r\n');
 }
-function buildIcs(list){
+function buildIcs(list, goals){
   const a = calAlerts(), [hh, mm] = (M.meta?.calTime || '09:00').split(':').map(Number), mins = (hh||0)*60 + (mm||0);
   const stampNow = new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
   const url = location.origin + location.pathname;
@@ -1744,13 +1779,31 @@ function buildIcs(list){
     }
     L.push('END:VEVENT');
   }
+  for (const { p, m } of (goals || [])){
+    const who = m.who ? m.who + ': ' : '';
+    if (m.due){
+      L.push('BEGIN:VEVENT', 'UID:goal-' + m.id + '@todo-list', 'DTSTAMP:' + stampNow,
+        'DTSTART;VALUE=DATE:' + m.due.replace(/-/g,''), 'DTEND;VALUE=DATE:' + addDays(m.due, 1).replace(/-/g,''),
+        'SUMMARY:' + icsEsc('Goal due: ' + who + m.name), 'DESCRIPTION:' + icsEsc(p.name + (m.desc ? '\n' + m.desc : '') + '\n' + url), 'URL:' + url, 'TRANSP:TRANSPARENT');
+      const days = new Set(); if (a.start) days.add(goalLead(m)); if (a.week) days.add(7); if (a.day) days.add(1); if (a.on) days.add(0);
+      for (const n of [...days].sort((x,y) => y - x)){ const off = n * 1440 - mins; L.push('BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(say(n) + ': goal ' + m.name), 'TRIGGER:' + (off > 0 ? '-PT' + off + 'M' : 'PT' + (-off) + 'M'), 'END:VALARM'); }
+      L.push('END:VEVENT');
+    }
+    if (m.remind){
+      L.push('BEGIN:VEVENT', 'UID:goal-checkin-' + m.id + '@todo-list', 'DTSTAMP:' + stampNow,
+        'DTSTART;VALUE=DATE:' + m.remind.replace(/-/g,''), 'DTEND;VALUE=DATE:' + addDays(m.remind, 1).replace(/-/g,''),
+        'SUMMARY:' + icsEsc('Check in: ' + who + m.name), 'DESCRIPTION:' + icsEsc(p.name + (m.desc ? '\n' + m.desc : '') + '\n' + url), 'URL:' + url, 'TRANSP:TRANSPARENT',
+        'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc('Check in on goal: ' + m.name), 'TRIGGER:PT' + mins + 'M', 'END:VALARM', 'END:VEVENT');
+    }
+  }
   L.push('END:VCALENDAR');
   return L.map(icsFold).join('\r\n') + '\r\n';
 }
 function calExport(){
   const list = tasks().filter(t => isOpen(t) && effDue(t) && (calAlerts().people || mine(t)));
-  if (!list.length){ showNote('No open tasks have a deadline yet. Set one in a task’s Deadline field.'); return; }
-  downloadFile('todo-deadlines.ics', buildIcs(list), 'text/calendar');
+  const goals = allGoals().filter(({m}) => !m.done && (m.due || m.remind) && (calAlerts().people || !m.who));
+  if (!list.length && !goals.length){ showNote('No open tasks have a deadline yet. Set one in a task’s Deadline field.'); return; }
+  downloadFile('todo-deadlines.ics', buildIcs(list, goals), 'text/calendar');
 }
 function renderAdd(){
   const recent = UI.recent.map(id => M.tasks.get(id)).filter(Boolean);
@@ -1884,6 +1937,14 @@ function renderProj(){
           <button class="q ${m.done?'':'on'}" data-act="ms-done" data-id="${m.id}">${m.done ? 'Reopen' : 'Mark reached'}</button>
           <button class="q ${UI.armed===ak?'on':''}" data-act="ms-del" data-id="${m.id}" title="Delete goal; its tasks stay in the project">${UI.armed===ak ? 'Confirm' : '✕'}</button>
         </span>
+      </div>
+      <div class="ms-meta">
+        <textarea class="ms-desc" id="ms-desc-${m.id}" data-ms-desc="${m.id}" rows="1" placeholder="Add a description">${esc(m.desc || '')}</textarea>
+        ${m.done ? '' : `<div class="ms-rem">
+          ${m.due ? `<label>Start reminding <input type="number" inputmode="numeric" min="0" max="365" list="lead-presets" id="ms-lead-${m.id}" data-ms-lead="${m.id}" value="${leadNum(m.lead) ?? ''}" placeholder="${defLead()}"> days before it’s due</label>` : ''}
+          <label>Check in on <input type="date" id="ms-remind-${m.id}" data-ms-remind="${m.id}" value="${m.remind || ''}"></label>
+          ${goalSurfaced(m) ? '<span class="ms-now">showing on Today</span>' : ''}
+        </div>`}
       </div>`;
     if (expanded){
       h += openT.length ? statusSections(openT, 'proj') : `<div class="empty" style="padding:14px">${m.done ? 'All tasks finished.' : 'No open tasks for this goal yet. Add one below, or drag tasks here.'}</div>`;
@@ -2027,6 +2088,7 @@ document.addEventListener('click', e => {
     case 'wk-now': UI.week = curWeek(); break;
     case 'ord-reset': setDayOrder(el.dataset.d, []); break;
     case 'qa-tips': UI.qaTips = !UI.qaTips; break;
+    case 'ms-checked': { const m = msList(projById(el.dataset.p)).find(x => x.id === id); if (m){ m.remind = ''; saveMeta(); showNote('Check-in for “' + m.name + '” cleared.'); } break; }
     case 'wk-move':
       if (UI.armed === 'wk-move'){ UI.armed = null; const n = moveUnfinishedToNextWeek(); showNote('Moved ' + n + ' unfinished item' + (n === 1 ? '' : 's') + ' to next week.'); }
       else UI.armed = 'wk-move';
@@ -2153,6 +2215,12 @@ document.addEventListener('change', e => {
     else M.meta.calAlerts = { ...calAlerts(), [k]: el.checked };
     saveMeta(); render(); return;
   }
+  if (el.dataset.msDesc || el.dataset.msLead || el.dataset.msRemind){
+    const m = msList(projById(UI.proj)).find(x => x.id === (el.dataset.msDesc || el.dataset.msLead || el.dataset.msRemind)); if (!m) return;
+    if (el.dataset.msDesc){ const v = el.value.trim(); if ((m.desc || '') !== v){ m.desc = v; saveMeta(); } return; }
+    if (el.dataset.msLead){ const n = leadNum(el.value); m.lead = n ?? ''; saveMeta(); render(); return; }
+    if (el.dataset.msRemind){ m.remind = el.value; saveMeta(); render(); return; }
+  }
   if (el.dataset.msWho){
     const m = msList(projById(UI.proj)).find(x => x.id === el.dataset.msWho);
     const v = canonPerson(el.value);
@@ -2215,6 +2283,7 @@ document.addEventListener('input', e => {
     }, 900);
   }
   if (e.target.id === 'pick-q'){ UI.pickQ = e.target.value; requestRender(); }
+  if (e.target.dataset?.msDesc){ e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }
   if (e.target.id === 'qa-text'){
     const pv = document.getElementById('qa-prev');
     if (pv) pv.innerHTML = previewHTML(e.target.value, document.getElementById('qa-target')?.value || '', qaWhen(), true);
