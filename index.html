@@ -1728,12 +1728,11 @@ function calExport(){
 function renderAdd(){
   const recent = UI.recent.map(id => M.tasks.get(id)).filter(Boolean);
   return `<div class="cap">
-    <h1>Quick add</h1>
-    <div class="sub" style="margin-bottom:12px">One task per line. Tasks go on today’s list unless you say otherwise.</div>
-    <textarea id="cap-text" placeholder="Add tasks, one per line" autocomplete="off" autocapitalize="sentences"></textarea>
+    <h1 style="margin-bottom:12px">Quick add</h1>
+    <textarea id="cap-text" placeholder="Add a task" autocomplete="off" autocapitalize="sentences"></textarea>
     <div class="prev" id="cap-prev"></div>
-    <div class="row"><button class="btn pri" data-act="cap-add">Add</button>${ready ? `<button class="btn" data-act="nav" data-v="week">Open this week</button>` : `<span class="sub" style="margin:0">Connecting…</span>`}</div>
-    <div class="hint">Shortcuts: <code>tomorrow</code>, <code>fri</code>, <code>nov 20</code>, <code>by dec 15</code> (deadline), <code>2-4pm</code>, <code>#project</code>, <code>@name</code>, <code>waiting on Sam</code>. Tasks without a project go to the Inbox.</div>
+    <div class="row"><button class="btn pri" data-act="cap-add">Add</button>${ready ? '' : `<span class="sub" style="margin:0">Connecting…</span>`}<span class="spacer" style="flex:1"></span><button class="q" data-act="qa-tips">${UI.qaTips ? 'Hide tips' : 'Tips'}</button></div>
+    ${UI.qaTips ? `<div class="hint">One task per line; they go on today’s list. Add <code>tomorrow</code>, <code>fri</code>, <code>nov 20</code>, <code>by dec 15</code> (deadline), <code>2-4pm</code>, <code>#project</code>, <code>@name</code> or <code>waiting on Sam</code>.</div>` : ''}
     ${recent.length ? `<div class="sec"><div class="sec-h"><h2>Just added</h2><span class="n">${recent.length}</span></div><div class="card">${recent.map(t => taskRow(t,'add')).join('')}</div></div>` : ''}
   </div>`;
 }
@@ -2000,6 +1999,7 @@ document.addEventListener('click', e => {
     case 'wk-next': UI.week = addDays(UI.week, 7); break;
     case 'wk-now': UI.week = curWeek(); break;
     case 'ord-reset': setDayOrder(el.dataset.d, []); break;
+    case 'qa-tips': UI.qaTips = !UI.qaTips; break;
     case 'wk-move':
       if (UI.armed === 'wk-move'){ UI.armed = null; const n = moveUnfinishedToNextWeek(); showNote('Moved ' + n + ' unfinished item' + (n === 1 ? '' : 's') + ' to next week.'); }
       else UI.armed = 'wk-move';
