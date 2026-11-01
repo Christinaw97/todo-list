@@ -323,6 +323,9 @@ textarea.notes:focus{border-color:var(--accent)}
 .pk-proj .dot{width:7px;height:7px;border-radius:2px;flex-shrink:0}
 .pk-proj .n{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint);font-weight:400}
 .pk-proj .g{font-weight:400;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.grp-h.late{color:var(--danger)}
+.dg-tasks{padding-left:22px;border-left:2px solid var(--line2);margin-left:22px}
+.pk-more{display:block;border:0;background:none;color:var(--accent);font-size:12px;padding:4px 14px 6px 29px}
 .pk-goal{padding:4px 14px 0 29px;font-size:11.5px;color:var(--muted)}
 .pk-goal.cur{color:var(--accent);font-weight:600}
 .pk{display:flex;align-items:flex-start;gap:8px;padding:5px 14px 5px 29px}
@@ -599,7 +602,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v22';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v23';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1495,9 +1498,34 @@ function renderToday(){
 
 function deadlinesSec(list, cls){
   if (!list.length) return '';
-  list.sort((a,b) => effDue(a) < effDue(b) ? -1 : effDue(a) > effDue(b) ? 1 : 0);
+  const td = today();
+  const buckets = [['Overdue', n => n < 0], ['This week', n => n <= 7], ['Next 2 weeks', n => n <= 14], ['Later', () => true]];
+  const byB = buckets.map(() => []);
+  for (const t of list){ const n = dayDiff(td, effDue(t)); byB[buckets.findIndex(([, f]) => f(n))].push(t); }
+  let body = '';
+  buckets.forEach(([name], i) => {
+    const ts = byB[i]; if (!ts.length) return;
+    ts.sort((a, b) => effDue(a) < effDue(b) ? -1 : effDue(a) > effDue(b) ? 1 : 0);
+    // tasks that only share their goal's deadline collapse into one goal row
+    const groups = new Map(), rows = [];
+    for (const t of ts){
+      if (dueFromGoal(t)){ const k = t.project + '|' + t.milestone; if (!groups.has(k)){ groups.set(k, []); rows.push({ goal: k }); } groups.get(k).push(t); }
+      else rows.push({ t });
+    }
+    body += `<div class="grp"><div class="grp-h ${i === 0 ? 'late' : ''}">${name}<span class="n">${ts.length}</span></div>`;
+    for (const r of rows){
+      if (r.t){ body += taskRowOnly(r.t, 'due'); continue; }
+      const g = groups.get(r.goal), t0 = g[0], m = msById(t0), p = projById(t0.project), dd = effDue(t0), n = dayDiff(td, dd);
+      if (g.length === 1){ body += taskRowOnly(t0, 'due'); continue; }
+      const key = 'dg:' + r.goal, open = UI.openPick.has(key);
+      body += `<div class="task goal-row"><span class="g-flag">⚑</span><div class="t-main" data-act="pick-toggle" data-id="${key}"><div class="t-title">${esc(m.name)}</div>
+        <div class="chips"><span class="chip proj"><i style="background:${catColor(t0)}"></i>${esc(p ? p.name : projLabel(t0))}</span><span class="chip mono ${n < 0 ? 'late' : n <= 2 ? 'soon' : n <= 7 ? 'ahead' : ''}">due ${rel(dd)}${n > 6 || n < 0 ? ' · ' + dueIn(dd) : ''}</span><span class="chip mono">${g.length} tasks ${open ? '▾' : '▸'}</span></div></div></div>`;
+      if (open) body += `<div class="dg-tasks">${g.map(t => taskRowOnly(t, 'due')).join('')}</div>`;
+    }
+    body += `</div>`;
+  });
   return `<div class="sec ${cls||''}"><div class="sec-h"><h2>Deadlines coming up</h2><span class="n">${list.length}</span><span class="spacer"></span><span class="n">${defLead() ? esc(leadLabel(defLead())) + ' ahead' : 'on the day'}</span></div>
-    <div class="card">${list.map(t => taskRowOnly(t, 'due')).join('')}</div></div>`;
+    <div class="card">${body}</div></div>`;
 }
 function peopleSec(list, cls){
   if (!list.length) return '';
@@ -1577,14 +1605,28 @@ function renderPicker(D){
   let h = `<div class="sec-h" style="margin-top:0"><h2>Pick for ${isToday ? 'today' : label}</h2><span class="n">from your projects and goals</span></div>
     <div class="card"><input class="pk-search" id="pick-q" placeholder="Search" value="${esc(UI.pickQ)}" autocomplete="off">`;
 
-  const attn = cand.filter(t => match(t) && pingDue(t));
-  attn.forEach(t => used.add(t.id));
-  if (attn.length) h += `<div class="pk-sec"><div class="pk-h">Needs a ping<span class="n">${attn.length}</span></div>${sortTasks(attn).map(t => row(t, true)).join('')}</div>`;
-
-  const wk = cand.filter(t => match(t) && !used.has(t.id) && effWeek(t) === weekOf(D));
-  wk.forEach(t => used.add(t.id));
+  // Suggested: rank what most needs attention, and say why
+  const W0 = weekOf(D), nextUp = new Set();
+  for (const p of projs()){ const cur = currentMs(p); if (!cur) continue; sortTasks(cand.filter(t => t.project === p.id && t.milestone === cur.id)).slice(0, 2).forEach(t => nextUp.add(t.id)); }
+  const whyOf = t => {
+    const why = []; let score = 0; const dd = effDue(t);
+    if (dd){ const n = dayDiff(D, dd);
+      if (n < 0){ score = Math.max(score, 100); why.push({ k:'late', txt:'overdue ' + (-n) + (n === -1 ? ' day' : ' days') }); }
+      else if (n <= 3){ score = Math.max(score, 90 - n); why.push({ k:'soon', txt:(dueFromGoal(t) ? '⚑ ' : '') + 'due ' + rel(dd) }); }
+      else if (surfaced(t, D)){ score = Math.max(score, 55 - Math.min(n, 45) / 3); why.push({ k: n <= 7 ? 'ahead' : '', txt:(dueFromGoal(t) ? '⚑ ' : '') + 'due ' + short(dd) }); } }
+    if (pingDue(t)){ score = Math.max(score, 85); why.push({ k:'late', txt:'ping ' + (t.waitingOn || 'them') }); }
+    if (t.status === 'doing'){ score = Math.max(score, 75); why.push({ k:'', txt:'in progress' }); }
+    if (effWeek(t) === W0){ score = Math.max(score, 70); why.push({ k:'', txt:'this week’s list' }); }
+    if (nextUp.has(t.id)){ score = Math.max(score, 45); why.push({ k:'', txt:'next in ⚑ ' + currentMs(projById(t.project)).name }); }
+    return { score, why };
+  };
+  const sugRow = (t, why) => `<div class="pk flat"><div class="t-main"><div class="t-title" data-act="open" data-id="${t.id}">${esc(t.title)}</div><div class="chips" data-act="open" data-id="${t.id}"><span class="chip proj"><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>${why.map(w => `<span class="chip mono ${w.k}">${esc(w.txt)}</span>`).join('')}</div>${pickSteps(t)}</div><button class="q add" data-act="pick" data-id="${t.id}">+ ${label}</button></div>`;
+  const sugg = cand.filter(match).map(t => ({ t, ...whyOf(t) })).filter(x => x.score > 0).sort((x, y) => y.score - x.score || ((effDue(x.t) || '9999') < (effDue(y.t) || '9999') ? -1 : 1));
   const wkSteps = allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sWeek(c) === weekOf(D) && sDay(c) !== D && !used.has(t.id) && (!q || (c.text + ' ' + t.title + ' ' + projLabel(t)).toLowerCase().includes(q)));
-  if (wk.length || wkSteps.length) h += `<div class="pk-sec"><div class="pk-h">On this week’s list<span class="n">${wk.length + wkSteps.length}</span></div>${sortTasks(wk).map(t => row(t, true)).join('')}${wkSteps.map(({t,c}) => `<div class="pk flat"><div class="t-main" data-act="open" data-id="${t.id}"><div class="t-title">${esc(c.text)}</div><div class="st-ctx">↳ ${esc(t.title)}${projById(t.project) ? ', ' + esc(projById(t.project).name) : ''}</div></div><button class="q add" data-act="step-day" data-id="${t.id}" data-s="${c.id}">+ ${label}</button></div>`).join('')}</div>`;
+  const limit = UI.pickMore || q ? 99 : 8, shown = sugg.slice(0, limit);
+  shown.forEach(x => used.add(x.t.id));
+  if (shown.length || wkSteps.length) h += `<div class="pk-sec"><div class="pk-h">Suggested<span class="n">${sugg.length + wkSteps.length}</span></div>${shown.map(x => sugRow(x.t, x.why)).join('')}${wkSteps.map(({t,c}) => `<div class="pk flat"><div class="t-main" data-act="open" data-id="${t.id}"><div class="t-title">${esc(c.text)}</div><div class="st-ctx">↳ ${esc(t.title)}${projById(t.project) ? ', ' + esc(projById(t.project).name) : ''}</div></div><button class="q add" data-act="step-day" data-id="${t.id}" data-s="${c.id}">+ ${label}</button></div>`).join('')}${sugg.length > 8 && !q ? `<button class="pk-more" data-act="pick-more">${UI.pickMore ? 'Show fewer' : 'Show ' + (sugg.length - 8) + ' more'}</button>` : ''}</div>`;
+
 
   let body = '';
   for (const c of cats()){
@@ -1616,8 +1658,8 @@ function renderPicker(D){
     body += `<button class="pk-proj" data-act="pick-toggle" data-id="inbox"><span class="dot" style="background:var(--faint)"></span>Inbox<span class="n">${inbox.length} ${openIt ? '▾' : '▸'}</span></button>`;
     if (openIt) body += sortTasks(inbox).map(t => row(t)).join('');
   }
-  if (body) h += `<div class="pk-sec"><div class="pk-h">By project</div>${body}</div>`;
-  if (!attn.length && !wk.length && !body) h += `<div class="empty">${q ? 'No tasks match.' : 'Every open task is already on this day.'}</div>`;
+  if (body) h += `<div class="pk-sec"><div class="pk-h">${shown.length || wkSteps.length ? 'Everything else, by project' : 'By project'}</div>${body}</div>`;
+  if (!shown.length && !wkSteps.length && !body) h += `<div class="empty">${q ? 'No tasks match.' : 'Every open task is already on this day.'}</div>`;
   return h + `</div>`;
 }
 
@@ -2093,6 +2135,7 @@ document.addEventListener('click', e => {
     case 'wk-now': UI.week = curWeek(); break;
     case 'ord-reset': setDayOrder(el.dataset.d, []); break;
     case 'qa-tips': UI.qaTips = !UI.qaTips; break;
+    case 'pick-more': UI.pickMore = !UI.pickMore; break;
     case 'ms-checked': { const m = msList(projById(el.dataset.p)).find(x => x.id === id); if (m){ m.remind = ''; saveMeta(); showNote('Check-in for “' + m.name + '” cleared.'); } break; }
     case 'wk-move':
       if (UI.armed === 'wk-move'){ UI.armed = null; const n = moveUnfinishedToNextWeek(); showNote('Moved ' + n + ' unfinished item' + (n === 1 ? '' : 's') + ' to next week.'); }
