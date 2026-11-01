@@ -178,6 +178,9 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .drop-hint{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-soft)}
 [draggable="true"]{cursor:grab}
 .ditem.dragging,.kcard.dragging{opacity:.35}
+.ord{position:relative}
+.ord.ins-before{box-shadow:inset 0 3px 0 var(--accent)}
+.ord.ins-after{box-shadow:inset 0 -3px 0 var(--accent)}
 .drag-ghost{position:fixed;z-index:200;pointer-events:none;opacity:.92;box-shadow:var(--shadow);border-radius:8px;background:var(--panel);border:1px solid var(--accent);transform:rotate(1.5deg)}
 @media (hover:none){ [data-drag],[data-drag-step]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none} }
 
@@ -1421,12 +1424,18 @@ function renderToday(){
   // left: the day's list
   let left = '';
   if (!isPast) left += quickAdd(`<option value="${D}">${isToday ? 'Today' : dname}</option><option value="week">This week</option><option value="none">No date</option>`);
-  left += `<div class="sec" style="margin-top:${isPast?0:16}px"><div class="sec-h"><h2>${isPast ? 'Done that day' : 'Plan'}</h2><span class="n">${isPast ? doneN : (openP.length + flatOpen.length) + ' to do'}</span></div><div class="card" data-drop="${D}">`;
+  left += `<div class="sec" style="margin-top:${isPast?0:16}px"><div class="sec-h"><h2>${isPast ? 'Done that day' : 'Plan'}</h2><span class="n">${isPast ? doneN : (openP.length + flatOpen.length) + ' to do'}</span>${!isPast && dayOrder(D).length ? `<span class="spacer"></span><button class="q" data-act="ord-reset" data-d="${D}" title="Go back to ordering by time and project">Reset order</button>` : ''}</div><div class="card" data-drop="${D}" data-order-day="${D}">`;
   if (isPast) left += doneN ? doneP.map(t => taskRow(t,'today')).join('') + daySteps.filter(x => x.c.done).map(({t,c}) => stepRow(t, c, true, 'today')).join('') : `<div class="empty">Nothing was marked done.</div>`;
   else {
     const catIdx = t => { const c = taskCat(t); const i = cats().indexOf(c); return i < 0 ? 99 : i; };
     const entries = [...openP.map(t => ({ t, c:null })), ...flatOpen].sort((a,b) => (timeStart(a.c ? a.c.time : a.t.time) - timeStart(b.c ? b.c.time : b.t.time)) || (catIdx(a.t) - catIdx(b.t)) || ((a.t.project||'') < (b.t.project||'') ? -1 : (a.t.project||'') > (b.t.project||'') ? 1 : 0) || (a.c ? 1 : 0) - (b.c ? 1 : 0));
-    left += entries.length ? entries.map(e => e.c ? stepRow(e.t, e.c, true, 'today') : taskRow(e.t, 'today')).join('') : `<div class="empty">${isToday ? 'Nothing planned for today yet. Pick tasks or steps from your projects on the right.' : 'Nothing planned yet. Pick tasks or steps on the right.'}</div>`;
+    const ordKey = e => e.c ? 's:' + e.t.id + '|' + e.c.id : 't:' + e.t.id;
+    const ord = dayOrder(D);
+    if (ord.length){
+      const pos = new Map(ord.map((k, i) => [k, i])), base = entries.slice();
+      entries.sort((a, b) => { const pa = pos.get(ordKey(a)), pb = pos.get(ordKey(b)); if (pa !== undefined && pb !== undefined) return pa - pb; if (pa !== undefined) return -1; if (pb !== undefined) return 1; return base.indexOf(a) - base.indexOf(b); });
+    }
+    left += entries.length ? entries.map(e => e.c ? `<div class="ord" data-ord="${ordKey(e)}" draggable="true" data-drag-step="${e.t.id}|${e.c.id}">${stepRow(e.t, e.c, true, 'today')}</div>` : `<div class="ord" data-ord="${ordKey(e)}">${taskRow(e.t, 'today')}</div>`).join('') : `<div class="empty">${isToday ? 'Nothing planned for today yet. Pick tasks or steps from your projects on the right.' : 'Nothing planned yet. Pick tasks or steps on the right.'}</div>`;
     if (doneP.length || flatDone.length) left += `<div class="grp"><div class="grp-h">Done<span class="n">${doneP.length + flatDone.length}</span></div>${doneP.map(t => taskRow(t,'today')).join('')}${flatDone.map(({t,c}) => stepRow(t, c, true, 'today')).join('')}</div>`;
   }
   left += `</div></div>`;
@@ -1471,6 +1480,9 @@ function renderPeople(){
   return h;
 }
 // My unfinished tasks and steps planned for the current week (they roll into next week when it starts)
+// Manual order of a day's plan (keys 't:<task>' or 's:<task>|<step>'), saved with the day's notes record
+function dayOrder(D){ return M.weeks.get('d-' + D)?.order || []; }
+function setDayOrder(D, keys){ const d = M.weeks.get('d-' + D) || { kind:'day', id:'d-' + D, note:'' }; d.order = keys; saveWeek(d); }
 function unfinishedThisWeek(){
   const cw = curWeek();
   const ts = tasks().filter(t => mine(t) && isOpen(t) && effWeek(t) === cw);
@@ -1987,6 +1999,7 @@ document.addEventListener('click', e => {
     case 'wk-prev': UI.week = addDays(UI.week, -7); break;
     case 'wk-next': UI.week = addDays(UI.week, 7); break;
     case 'wk-now': UI.week = curWeek(); break;
+    case 'ord-reset': setDayOrder(el.dataset.d, []); break;
     case 'wk-move':
       if (UI.armed === 'wk-move'){ UI.armed = null; const n = moveUnfinishedToNextWeek(); showNote('Moved ' + n + ' unfinished item' + (n === 1 ? '' : 's') + ' to next week.'); }
       else UI.armed = 'wk-move';
@@ -2186,14 +2199,27 @@ document.addEventListener('input', e => {
 });
 
 // Drag and drop
-const DROP_SEL = '[data-drop],[data-drop-proj],[data-drop-ms],[data-drop-kms],[data-drop-status]';
+const DROP_SEL = '[data-ord],[data-drop],[data-drop-proj],[data-drop-ms],[data-drop-kms],[data-drop-status]';
 const dragRef = el => el.dataset.drag || (el.dataset.dragStep ? 'step:' + el.dataset.dragStep : '');
 function canDrop(z, ref){
   if (!z) return false;
+  if (z.dataset.ord !== undefined) return !!ref;
   if (ref.startsWith('step:')) return z.dataset.drop !== undefined;   // steps move between days / the week list
   return true;
 }
-function dropOn(z, ref){
+function dropOn(z, ref, y){
+  if (z.dataset.ord !== undefined){
+    const list = z.closest('[data-order-day]'), D = list?.dataset.orderDay; if (!D) return;
+    const key = ref.startsWith('step:') ? 's:' + ref.slice(5) : 't:' + ref;
+    if (z.dataset.ord === key) return;
+    if (ref.startsWith('step:')){ const [tid, sid] = ref.slice(5).split('|'), x = findStep(tid, sid); if (!x) return; if (sDay(x.c) !== D){ x.c.day = D; x.c.week = weekOf(D); saveTask(x.t); } }
+    else { const t = M.tasks.get(ref); if (!t || t.status === 'done') return; if (effDay(t) !== D){ setWhen(t, D); saveTask(t); } }
+    const keys = [...list.querySelectorAll(':scope > [data-ord]')].map(el => el.dataset.ord).filter(k => k !== key);
+    const r = z.getBoundingClientRect();
+    let i = keys.indexOf(z.dataset.ord); if (i < 0) i = keys.length; else if (y != null && y > r.top + r.height / 2) i++;
+    keys.splice(i, 0, key);
+    setDayOrder(D, keys); render(); return;
+  }
   if (ref.startsWith('step:')){
     const [tid, sid] = ref.slice(5).split('|'), x = findStep(tid, sid), d = z.dataset.drop;
     if (!x || d === undefined) return;
@@ -2214,7 +2240,12 @@ function dropOn(z, ref){
   if (t.status === 'done' && d !== 'week') return;
   planDay(id, d);
 }
-const clearHints = () => document.querySelectorAll('.drop-hint').forEach(x => x.classList.remove('drop-hint'));
+const clearHints = () => document.querySelectorAll('.drop-hint,.ins-before,.ins-after').forEach(x => x.classList.remove('drop-hint','ins-before','ins-after'));
+function markZone(z, y){
+  clearHints();
+  if (z.dataset.ord !== undefined){ const r = z.getBoundingClientRect(); z.classList.add(y < r.top + r.height / 2 ? 'ins-before' : 'ins-after'); }
+  else z.classList.add('drop-hint');
+}
 let dragNow = '';
 document.addEventListener('dragstart', e => {
   const el = e.target.closest?.('[data-drag],[data-drag-step]'); if (!el) return;
@@ -2225,13 +2256,13 @@ document.addEventListener('dragstart', e => {
 document.addEventListener('dragend', e => { e.target.closest?.('[data-drag],[data-drag-step]')?.classList.remove('dragging'); clearHints(); dragNow = ''; });
 document.addEventListener('dragover', e => {
   const z = e.target.closest?.(DROP_SEL); if (!z || !canDrop(z, dragNow)) return;
-  e.preventDefault(); document.querySelectorAll('.drop-hint').forEach(x => x !== z && x.classList.remove('drop-hint')); z.classList.add('drop-hint');
+  e.preventDefault(); markZone(z, e.clientY);
 });
 document.addEventListener('drop', e => {
   const z = e.target.closest?.(DROP_SEL); if (!z) return;
   e.preventDefault(); clearHints();
   const ref = e.dataTransfer.getData('text/plain') || dragNow; dragNow = '';
-  if (ref && canDrop(z, ref)) dropOn(z, ref);
+  if (ref && canDrop(z, ref)) dropOn(z, ref, e.clientY);
 });
 
 /* Touch: press and hold a task or step, then drag it (phones and tablets) */
@@ -2246,9 +2277,8 @@ function tdEnd(){
 function tdZone(){
   const under = document.elementFromPoint(TD.x, TD.y);
   const z = under?.closest(DROP_SEL);
-  clearHints();
   TD.zone = z && canDrop(z, TD.ref) ? z : null;
-  if (TD.zone) TD.zone.classList.add('drop-hint');
+  if (TD.zone) markZone(TD.zone, TD.y); else clearHints();
 }
 function tdFrame(){
   if (!TD || !TD.active) return;
@@ -2288,7 +2318,7 @@ document.addEventListener('touchmove', e => {
 }, { passive: false });
 document.addEventListener('touchend', e => {
   if (!TD) return;
-  if (TD.active){ e.preventDefault(); touchDropAt = Date.now(); tdZone(); const z = TD.zone, ref = TD.ref; tdEnd(); if (z) dropOn(z, ref); }
+  if (TD.active){ e.preventDefault(); touchDropAt = Date.now(); tdZone(); const z = TD.zone, ref = TD.ref, y = TD.y; tdEnd(); if (z) dropOn(z, ref, y); }
   else tdEnd();
 }, { passive: false });
 document.addEventListener('touchcancel', tdEnd);
