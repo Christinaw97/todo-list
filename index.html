@@ -329,6 +329,7 @@ textarea.notes:focus{border-color:var(--accent)}
 .st-hist details{margin-top:2px}
 .st-hist summary{cursor:pointer;color:var(--accent);font-size:11.5px;width:max-content}
 .st-hist details div{font-family:var(--mono);font-size:11px;color:var(--faint);padding-left:4px}
+.arch-note{margin:4px 0 12px;padding:8px 12px;border-radius:8px;background:var(--panel2);border:1px dashed var(--line);font-size:12.5px;color:var(--muted)}
 .pk-more{display:block;border:0;background:none;color:var(--accent);font-size:12px;padding:4px 14px 6px 29px}
 .pk-goal{padding:4px 14px 0 29px;font-size:11.5px;color:var(--muted)}
 .pk-goal.cur{color:var(--accent);font-weight:600}
@@ -572,7 +573,9 @@ const sRolled = c => !c.done && c.day && c.day < today();
 function allSteps(){ const out = []; for (const t of M.tasks.values()) for (const c of stepsOf(t)) if (isOpen(t) || c.done) out.push({ t, c }); return out; }
 function findStep(tid, sid){ const t = M.tasks.get(tid); const c = t && stepsOf(t).find(x => x.id === sid); return c ? { t, c } : null; }
 const pingDue = t => t.status === 'waiting' && t.pingBy && t.pingBy <= today();
-const isOpen = t => t.status !== 'done';
+const notDone = t => t.status !== 'done';
+// Open and part of your active work: tasks in archived projects are left out of Today, This week, suggestions, deadlines, counts
+const isOpen = t => t.status !== 'done' && !projById(t.project)?.archived;
 
 /* Deadlines: when a deadline starts showing up, and calendar alerts */
 const LEAD_PRESETS = [1,2,3,5,7,10,14,21,30,45,60,90,120,180];
@@ -606,7 +609,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v24';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v25';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -797,7 +800,7 @@ const UI = {
   lastMs: {},
   openMs: new Set()
 };
-const HASH_VIEWS = ['today','week','board','add','waiting','log','inbox','sync','people'];
+const HASH_VIEWS = ['today','week','board','add','waiting','log','inbox','sync','people','archived'];
 function applyHash(){
   const h = location.hash.slice(1);
   if (HASH_VIEWS.includes(h)){ const prev = UI.view; UI.view = h; if (h === 'week' && prev !== 'week') UI.week = curWeek(); if (h === 'today' && prev !== 'today') UI.day = today(); }
@@ -1128,7 +1131,7 @@ function stepRow(t, c, flat, ctx){
   </div>`;
 }
 function nestedSteps(t, ctx){
-  if (!isOpen(t) || !stepsOf(t).length) return '';
+  if (!notDone(t) || !stepsOf(t).length) return '';
   const D = UI.view === 'today' ? UI.day : today();
   const openS = stepsOf(t).filter(c => !c.done);
   const shownDone = ctx === 'today' ? stepsOf(t).filter(c => c.done && c.doneDate === D) : [];
@@ -1229,6 +1232,7 @@ function render(){
   else if (UI.view === 'week') v.innerHTML = renderWeek();
   else if (UI.view === 'waiting') v.innerHTML = renderWaiting();
   else if (UI.view === 'people') v.innerHTML = renderPeople();
+  else if (UI.view === 'archived') v.innerHTML = renderArchived();
   else if (UI.view === 'log') v.innerHTML = renderLog();
   else if (UI.view === 'cat') v.innerHTML = renderCat();
   else if (UI.view === 'proj') v.innerHTML = renderProj();
@@ -1292,6 +1296,8 @@ function renderSide(){
       h += UI.adding === c.id ? sideInput(c.id) : `<button class="side-add" data-act="add-proj" data-id="${c.id}">+ Project</button>`;
     }
   }
+  const arch = projs().filter(p => p.archived);
+  if (arch.length) h += `<button class="nav ${UI.view==='archived'?'on':''}" data-act="nav" data-v="archived" style="margin-top:10px"><span class="ic">▣</span>Archived<span class="ct">${arch.length}</span></button>`;
   return h;
 }
 function sideInput(which){
@@ -1561,6 +1567,19 @@ function peopleSec(list, cls){
   let h = `<div class="sec ${cls||''}"><div class="sec-h"><h2>People</h2><span class="n">${list.length}</span><span class="spacer"></span><button class="q" data-act="nav" data-v="people">All people ›</button></div><div class="card">`;
   for (const [w, ts] of [...groups].sort((a,b) => a[0].localeCompare(b[0]))) h += `<div class="grp"><div class="grp-h">👤 ${esc(w)}<span class="n">${ts.length}</span></div>${ts.map(t => taskRowOnly(t, 'people')).join('')}</div>`;
   return h + `</div></div>`;
+}
+function renderArchived(){
+  const arch = projs().filter(p => p.archived);
+  let h = `<div class="head"><h1>Archived projects</h1></div><div class="sub">Hidden from your lists, with everything kept. Unarchive to bring one back.</div>`;
+  if (!arch.length) return h + `<div class="card"><div class="empty">Nothing archived. Use Archive on a project’s page.</div></div>`;
+  h += `<div class="card">` + arch.map(p => {
+    const ts = tasks().filter(t => t.project === p.id), open = ts.filter(notDone).length, c = catById(p.cat);
+    return `<div class="task"><span class="g-flag" style="color:${c?.color || 'var(--faint)'}">■</span>
+      <div class="t-main" data-act="nav" data-v="proj" data-id="${p.id}"><div class="t-title">${esc(p.name)}</div>
+        <div class="chips"><span class="chip">${esc(c?.name || 'No category')}</span><span class="chip mono">${open} open, ${ts.length - open} done</span>${p.archivedAt ? `<span class="chip mono">archived ${short(p.archivedAt)}</span>` : ''}</div></div>
+      <div class="t-quick" style="opacity:1"><button class="q" data-act="nav" data-v="proj" data-id="${p.id}">Open</button><button class="q" data-act="proj-unarchive" data-id="${p.id}">Unarchive</button></div></div>`;
+  }).join('') + `</div>`;
+  return h;
 }
 function renderPeople(){
   const ps = people(), td = today(), cut = addDays(td, -14);
@@ -1975,7 +1994,7 @@ function renderProj(){
   const p = projById(UI.proj); if (!p) { UI.view='week'; return renderWeek(); }
   const c = catById(p.cat);
   const list = tasks().filter(t => t.project === p.id);
-  const open = list.filter(isOpen);
+  const open = list.filter(notDone);
   const mss = msList(p);
   const cur = currentMs(p);
   const armKey = 'proj:' + p.id;
@@ -1987,7 +2006,9 @@ function renderProj(){
   let h = `<div class="crumb">${esc(c?.name || '')}</div>
     <div class="head"><input class="title-input" id="ren-proj" value="${esc(p.name)}" data-ren="proj" data-id="${p.id}" aria-label="Project name">
     <span class="spacer"></span>
+    <button class="btn" data-act="${p.archived ? 'proj-unarchive' : 'proj-archive'}" data-id="${p.id}" title="${p.archived ? 'Bring this project back into your lists' : 'Hide this project and its tasks from your lists without deleting anything'}">${p.archived ? 'Unarchive' : 'Archive'}</button>
     <button class="btn warn ${UI.armed===armKey?'armed':''}" data-act="del-proj" data-id="${p.id}">${UI.armed===armKey ? `Delete with ${list.length} tasks?` : 'Delete project'}</button></div>
+    ${p.archived ? `<div class="arch-note">Archived${p.archivedAt ? ' on ' + short(p.archivedAt) : ''}. Its tasks are hidden from Today, This week, the board and suggestions. Nothing has been deleted.</div>` : ''}
     <div class="sub">${open.length} open, ${list.length - open.length} done${mss.length ? `, ${mss.filter(m=>m.done).length} of ${mss.length} goals reached` : ''}.</div>
     ${qa}`;
 
@@ -1997,7 +2018,7 @@ function renderProj(){
     const isCur = cur && cur.id === m.id;
     const expanded = !m.done || UI.openMs.has(m.id);
     const ak = 'ms:' + m.id;
-    const openT = st.list.filter(isOpen), doneT = st.list.filter(t => !isOpen(t));
+    const openT = st.list.filter(notDone), doneT = st.list.filter(t => !notDone(t));
     h += `<div class="card ms ${isCur?'current':''} ${m.done?'reached':''}" data-drop-ms="${m.id}">
       <div class="ms-h">
         <span class="ms-num">${m.done ? '✓' : i + 1}</span>
@@ -2165,6 +2186,8 @@ document.addEventListener('click', e => {
     case 'ord-reset': setDayOrder(el.dataset.d, []); break;
     case 'qa-tips': UI.qaTips = !UI.qaTips; break;
     case 'pick-more': UI.pickMore = !UI.pickMore; break;
+    case 'proj-archive': { const p = projById(id); if (p){ p.archived = true; p.archivedAt = today(); saveMeta(); showNote('Archived “' + p.name + '”. You can find it under Archived in the sidebar.'); } break; }
+    case 'proj-unarchive': { const p = projById(id); if (p){ p.archived = false; p.archivedAt = ''; saveMeta(); showNote('“' + p.name + '” is back in your lists.'); } break; }
     case 'ms-checked': { const m = msList(projById(el.dataset.p)).find(x => x.id === id); if (m){ m.remind = ''; saveMeta(); showNote('Check-in for “' + m.name + '” cleared.'); } break; }
     case 'wk-move':
       if (UI.armed === 'wk-move'){ UI.armed = null; const n = moveUnfinishedToNextWeek(); showNote('Moved ' + n + ' unfinished item' + (n === 1 ? '' : 's') + ' to next week.'); }
