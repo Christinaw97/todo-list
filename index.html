@@ -179,6 +179,11 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 [draggable="true"]{cursor:grab}
 .ditem.dragging,.kcard.dragging{opacity:.35}
 .ord{position:relative}
+.grip{display:none}
+@media (hover:none){
+  .ord > .task, .ord > .step{padding-right:34px}
+  .grip{display:flex;align-items:center;justify-content:center;position:absolute;right:0;top:0;width:32px;height:44px;color:var(--faint);font-size:15px;letter-spacing:-3px;touch-action:none;-webkit-user-select:none;user-select:none}
+}
 .ord.ins-before{box-shadow:inset 0 3px 0 var(--accent)}
 .ord.ins-after{box-shadow:inset 0 -3px 0 var(--accent)}
 #update-bar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:300;display:flex;align-items:center;gap:12px;padding:10px 12px 10px 16px;border-radius:10px;background:var(--panel);border:1px solid var(--accent);box-shadow:var(--shadow);font-size:13.5px;white-space:nowrap}
@@ -594,7 +599,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v21';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v22';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1473,7 +1478,7 @@ function renderToday(){
       const pos = new Map(ord.map((k, i) => [k, i])), base = entries.slice();
       entries.sort((a, b) => { const pa = pos.get(ordKey(a)), pb = pos.get(ordKey(b)); if (pa !== undefined && pb !== undefined) return pa - pb; if (pa !== undefined) return -1; if (pb !== undefined) return 1; return base.indexOf(a) - base.indexOf(b); });
     }
-    left += entries.length ? entries.map(e => e.c ? `<div class="ord" data-ord="${ordKey(e)}" draggable="true" data-drag-step="${e.t.id}|${e.c.id}">${stepRow(e.t, e.c, true, 'today')}</div>` : `<div class="ord" data-ord="${ordKey(e)}">${taskRow(e.t, 'today')}</div>`).join('') : `<div class="empty">${isToday ? 'Nothing planned for today yet. Pick tasks or steps from your projects on the right.' : 'Nothing planned yet. Pick tasks or steps on the right.'}</div>`;
+    left += entries.length ? entries.map(e => e.c ? `<div class="ord" data-ord="${ordKey(e)}" draggable="true" data-drag-step="${e.t.id}|${e.c.id}">${stepRow(e.t, e.c, true, 'today')}<span class="grip" data-grip aria-hidden="true">⋮⋮</span></div>` : `<div class="ord" data-ord="${ordKey(e)}">${taskRow(e.t, 'today')}<span class="grip" data-grip aria-hidden="true">⋮⋮</span></div>`).join('') : `<div class="empty">${isToday ? 'Nothing planned for today yet. Pick tasks or steps from your projects on the right.' : 'Nothing planned yet. Pick tasks or steps on the right.'}</div>`;
     if (doneP.length || flatDone.length) left += `<div class="grp"><div class="grp-h">Done<span class="n">${doneP.length + flatDone.length}</span></div>${doneP.map(t => taskRow(t,'today')).join('')}${flatDone.map(({t,c}) => stepRow(t, c, true, 'today')).join('')}</div>`;
   }
   left += `</div></div>`;
@@ -2298,6 +2303,13 @@ document.addEventListener('input', e => {
 // Drag and drop
 const DROP_SEL = '[data-ord],[data-drop],[data-drop-proj],[data-drop-ms],[data-drop-kms],[data-drop-status]';
 const dragRef = el => el.dataset.drag || (el.dataset.dragStep ? 'step:' + el.dataset.dragStep : '');
+// Inside an orderable list, a drop on the list itself (a gap, below the last row) means the nearest row
+function refineZone(z, y){
+  if (!z || z.dataset.orderDay === undefined || y == null) return z;
+  const rows = [...z.querySelectorAll(':scope > [data-ord]')]; if (!rows.length) return z;
+  for (const r of rows){ const b = r.getBoundingClientRect(); if (y < b.bottom) return r; }
+  return rows[rows.length - 1];
+}
 function canDrop(z, ref){
   if (!z) return false;
   if (z.dataset.ord !== undefined) return !!ref;
@@ -2352,11 +2364,11 @@ document.addEventListener('dragstart', e => {
 });
 document.addEventListener('dragend', e => { e.target.closest?.('[data-drag],[data-drag-step]')?.classList.remove('dragging'); clearHints(); dragNow = ''; });
 document.addEventListener('dragover', e => {
-  const z = e.target.closest?.(DROP_SEL); if (!z || !canDrop(z, dragNow)) return;
+  const z = refineZone(e.target.closest?.(DROP_SEL), e.clientY); if (!z || !canDrop(z, dragNow)) return;
   e.preventDefault(); markZone(z, e.clientY);
 });
 document.addEventListener('drop', e => {
-  const z = e.target.closest?.(DROP_SEL); if (!z) return;
+  const z = refineZone(e.target.closest?.(DROP_SEL), e.clientY); if (!z) return;
   e.preventDefault(); clearHints();
   const ref = e.dataTransfer.getData('text/plain') || dragNow; dragNow = '';
   if (ref && canDrop(z, ref)) dropOn(z, ref, e.clientY);
@@ -2373,7 +2385,7 @@ function tdEnd(){
 }
 function tdZone(){
   const under = document.elementFromPoint(TD.x, TD.y);
-  const z = under?.closest(DROP_SEL);
+  const z = refineZone(under?.closest(DROP_SEL), TD.y);
   TD.zone = z && canDrop(z, TD.ref) ? z : null;
   if (TD.zone) markZone(TD.zone, TD.y); else clearHints();
 }
@@ -2389,10 +2401,11 @@ function tdFrame(){
 }
 document.addEventListener('touchstart', e => {
   if (e.touches.length !== 1) { tdEnd(); return; }
-  const el = e.target.closest?.('[data-drag],[data-drag-step]');
-  if (!el || e.target.closest('button,input,select,textarea,a')) return;
+  const grip = e.target.closest?.('[data-grip]');
+  const el = grip ? (grip.closest('[data-drag-step]') || grip.closest('.ord')?.querySelector('[data-drag]')) : e.target.closest?.('[data-drag],[data-drag-step]');
+  if (!el || (!grip && e.target.closest('button,input,select,textarea,a'))) return;
   const p = e.touches[0];
-  TD = { el, ref: dragRef(el), x: p.clientX, y: p.clientY, x0: p.clientX, y0: p.clientY, active: false, zone: null };
+  TD = { el, ref: dragRef(el), x: p.clientX, y: p.clientY, x0: p.clientX, y0: p.clientY, active: false, zone: null, grip: !!grip };
   TD.timer = setTimeout(() => {
     if (!TD) return;
     TD.active = true; el.classList.add('dragging');
@@ -2403,12 +2416,12 @@ document.addEventListener('touchstart', e => {
     document.body.appendChild(g); TD.ghost = g;
     try { navigator.vibrate?.(12); } catch(err){}
     TD.raf = requestAnimationFrame(tdFrame);
-  }, 350);
+  }, grip ? 0 : 350);
 }, { passive: true });
 document.addEventListener('touchmove', e => {
   if (!TD) return;
   const p = e.touches[0];
-  if (!TD.active){ if (Math.hypot(p.clientX - TD.x0, p.clientY - TD.y0) > 10) tdEnd(); return; }   // it's a scroll, not a drag
+  if (!TD.active){ if (TD.grip){ e.preventDefault(); return; } if (Math.hypot(p.clientX - TD.x0, p.clientY - TD.y0) > 10) tdEnd(); return; }   // it's a scroll, not a drag
   e.preventDefault();
   TD.x = p.clientX; TD.y = p.clientY;
   TD.ghost.style.left = (TD.x - TD.dx) + 'px'; TD.ghost.style.top = (TD.y - TD.dy) + 'px';
