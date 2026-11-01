@@ -1123,8 +1123,19 @@ const sortTasks = list => list.sort((a,b) =>
   (a.created < b.created ? -1 : 1));
 
 /* ============ Views ============ */
+// Scrollable areas whose position should survive a re-render (matched by selector + position)
+const KEEP_SCROLL = ['#scroll', '#side', '.picker .card', '.board-wrap', '.kcol-b', '#drawer .dr-b'];
+function saveScroll(){ return KEEP_SCROLL.map(sel => [...document.querySelectorAll(sel)].map(el => [el.scrollTop, el.scrollLeft])); }
+function restoreScroll(saved, sameView){
+  KEEP_SCROLL.forEach((sel, i) => {
+    if (!sameView && sel !== '#side') return;
+    document.querySelectorAll(sel).forEach((el, j) => { const p = saved[i][j]; if (p){ el.scrollTop = p[0]; el.scrollLeft = p[1]; } });
+  });
+}
+let lastRenderedView = null;
 function render(){
   if (!ready && UI.view !== 'add') return;
+  const scrollSaved = saveScroll(), viewKey = UI.view + '|' + (UI.proj || '') + '|' + (UI.cat || '') + '|' + (UI.open || '');
   document.body.classList.toggle('v-add', UI.view === 'add');
   document.body.classList.toggle('v-board', UI.view === 'board');
   const a = document.activeElement;
@@ -1149,6 +1160,8 @@ function render(){
   renderDrawer();
   const dt = document.getElementById('d-title');
   if (dt){ dt.style.height = 'auto'; dt.style.height = dt.scrollHeight + 'px'; }
+  restoreScroll(scrollSaved, viewKey === lastRenderedView);
+  lastRenderedView = viewKey;
 
   if (keep){
     const el = document.getElementById(keep.id);
