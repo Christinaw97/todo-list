@@ -175,7 +175,11 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .q.on{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
 .q-date{font-size:11px;padding:0 4px;height:20px;border:1px solid var(--accent);border-radius:5px;background:var(--panel);color:var(--text);outline:none}
 .empty{padding:22px 16px;color:var(--muted);font-size:13px;text-align:center}
-.drop-hint{outline:2px dashed var(--accent);outline-offset:-2px}
+.drop-hint{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-soft)}
+[draggable="true"]{cursor:grab}
+.ditem.dragging,.kcard.dragging{opacity:.35}
+.drag-ghost{position:fixed;z-index:200;pointer-events:none;opacity:.92;box-shadow:var(--shadow);border-radius:8px;background:var(--panel);border:1px solid var(--accent);transform:rotate(1.5deg)}
+@media (hover:none){ [data-drag],[data-drag-step]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none} }
 
 /* Days */
 .days-wrap{overflow-x:auto;padding-bottom:4px}
@@ -1161,6 +1165,7 @@ function render(){
   const dt = document.getElementById('d-title');
   if (dt){ dt.style.height = 'auto'; dt.style.height = dt.scrollHeight + 'px'; }
   restoreScroll(scrollSaved, viewKey === lastRenderedView);
+  if (matchMedia('(hover: none) and (pointer: coarse)').matches) document.querySelectorAll('[draggable="true"]').forEach(el => el.removeAttribute('draggable'));   // touch uses press-and-hold dragging instead
   lastRenderedView = viewKey;
 
   if (keep){
@@ -1322,13 +1327,13 @@ function renderWeek(){
     sortTasks(items);
     const dSteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === d : (isOpen(t) && sDay(c) === d)));
     const cls = d === td ? 'today' : d < td ? 'past' : '';
-    h += `<div class="day ${cls} ${items.length||dSteps.length?'':'noitems'}" data-drop="${d}"><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${DOW[i]}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}</div><div class="day-list">`;
+    h += `<div class="day ${cls} ${items.length||dSteps.length?'':'noitems'}" ${d >= td ? `data-drop="${d}"` : ''}><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${DOW[i]}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}</div><div class="day-list">`;
     if (!items.length && !dSteps.length) h += `<div class="day-empty">${d < td ? '' : 'Drop a task here'}</div>`;
-    h += dSteps.map(({t,c}) => `<div class="ditem ${c.done?'is-done':''}">
+    h += dSteps.map(({t,c}) => `<div class="ditem ${c.done?'is-done':''}" ${c.done ? '' : `draggable="true" data-drag-step="${t.id}|${c.id}"`}>
       <button class="sq ${c.done?'done':''}" data-act="step-toggle" data-id="${t.id}" data-s="${c.id}" aria-label="Toggle step">${c.done?'✓':''}</button>
       <span class="dt" data-act="open" data-id="${t.id}">${c.time && !c.done ? `<span class="tm">${esc(c.time)}</span>` : ''}${esc(c.text)}${sRolled(c)?' <span class="r">↻</span>':''}<span class="dsub">↳ ${esc(t.title)}</span></span>
       <span class="cd" style="background:${catColor(t)}"></span></div>`).join('');
-    h += items.map(t => `<div class="ditem ${t.status==='done'?'is-done':''}" draggable="true" data-drag="${t.id}">
+    h += items.map(t => `<div class="ditem ${t.status==='done'?'is-done':''}" ${t.status==='done' ? '' : `draggable="true" data-drag="${t.id}"`}>
       <button class="chk ${t.status}" data-act="done" data-id="${t.id}" aria-label="Toggle done">${t.status==='done'?'✓':''}</button>
       <span class="dt" data-act="open" data-id="${t.id}">${t.time && isOpen(t) ? `<span class="tm">${esc(t.time)}</span>` : ''}${esc(t.title)}${t.status==='waiting'?' <span class="r">⏳</span>':''}${rolled(t)?` <span class="r" title="Moved from ${short(t.day)}">↻</span>`:''}</span>
       <span class="cd" style="background:${catColor(t)}"></span>
@@ -2121,20 +2126,21 @@ document.addEventListener('input', e => {
 });
 
 // Drag and drop
-document.addEventListener('dragstart', e => {
-  const el = e.target.closest?.('[data-drag]'); if (!el) return;
-  e.dataTransfer.setData('text/plain', el.dataset.drag); e.dataTransfer.effectAllowed = 'move';
-  el.classList.add('dragging');
-});
-document.addEventListener('dragend', e => { e.target.closest?.('[data-drag]')?.classList.remove('dragging'); document.querySelectorAll('.drop-hint').forEach(x => x.classList.remove('drop-hint')); });
-document.addEventListener('dragover', e => {
-  const z = e.target.closest?.('[data-drop],[data-drop-proj],[data-drop-ms],[data-drop-kms],[data-drop-status]'); if (!z) return;
-  e.preventDefault(); document.querySelectorAll('.drop-hint').forEach(x => x !== z && x.classList.remove('drop-hint')); z.classList.add('drop-hint');
-});
-document.addEventListener('drop', e => {
-  const z = e.target.closest?.('[data-drop],[data-drop-proj],[data-drop-ms],[data-drop-kms],[data-drop-status]'); if (!z) return;
-  e.preventDefault(); z.classList.remove('drop-hint');
-  const id = e.dataTransfer.getData('text/plain'); const t = M.tasks.get(id); if (!t) return;
+const DROP_SEL = '[data-drop],[data-drop-proj],[data-drop-ms],[data-drop-kms],[data-drop-status]';
+const dragRef = el => el.dataset.drag || (el.dataset.dragStep ? 'step:' + el.dataset.dragStep : '');
+function canDrop(z, ref){
+  if (!z) return false;
+  if (ref.startsWith('step:')) return z.dataset.drop !== undefined;   // steps move between days / the week list
+  return true;
+}
+function dropOn(z, ref){
+  if (ref.startsWith('step:')){
+    const [tid, sid] = ref.slice(5).split('|'), x = findStep(tid, sid), d = z.dataset.drop;
+    if (!x || d === undefined) return;
+    if (d === 'week'){ x.c.day = ''; x.c.week = UI.week; } else { x.c.day = d; x.c.week = weekOf(d); }
+    saveTask(x.t); render(); return;
+  }
+  const id = ref, t = M.tasks.get(id); if (!t) return;
   if (z.dataset.dropStatus){ setStatus(t, z.dataset.dropStatus); render(); return; }
   if (z.dataset.dropKms !== undefined){
     const [pid, mid] = z.dataset.dropKms.split('|');
@@ -2145,9 +2151,90 @@ document.addEventListener('drop', e => {
   if (z.dataset.dropMs !== undefined){ t.project = UI.proj; t.cat = projById(UI.proj)?.cat || ''; t.milestone = z.dataset.dropMs; saveTask(t); render(); return; }
   if (z.dataset.dropProj){ t.project = z.dataset.dropProj; t.cat = projById(t.project)?.cat || ''; saveTask(t); render(); return; }
   const d = z.dataset.drop;
-  if (t.status === 'done' && d !== 'week'){ return; }
+  if (t.status === 'done' && d !== 'week') return;
   planDay(id, d);
+}
+const clearHints = () => document.querySelectorAll('.drop-hint').forEach(x => x.classList.remove('drop-hint'));
+let dragNow = '';
+document.addEventListener('dragstart', e => {
+  const el = e.target.closest?.('[data-drag],[data-drag-step]'); if (!el) return;
+  dragNow = dragRef(el);
+  e.dataTransfer.setData('text/plain', dragNow); e.dataTransfer.effectAllowed = 'move';
+  el.classList.add('dragging');
 });
+document.addEventListener('dragend', e => { e.target.closest?.('[data-drag],[data-drag-step]')?.classList.remove('dragging'); clearHints(); dragNow = ''; });
+document.addEventListener('dragover', e => {
+  const z = e.target.closest?.(DROP_SEL); if (!z || !canDrop(z, dragNow)) return;
+  e.preventDefault(); document.querySelectorAll('.drop-hint').forEach(x => x !== z && x.classList.remove('drop-hint')); z.classList.add('drop-hint');
+});
+document.addEventListener('drop', e => {
+  const z = e.target.closest?.(DROP_SEL); if (!z) return;
+  e.preventDefault(); clearHints();
+  const ref = e.dataTransfer.getData('text/plain') || dragNow; dragNow = '';
+  if (ref && canDrop(z, ref)) dropOn(z, ref);
+});
+
+/* Touch: press and hold a task or step, then drag it (phones and tablets) */
+const IS_TOUCH = matchMedia('(hover: none) and (pointer: coarse)').matches;
+let TD = null, touchDropAt = 0;
+function tdEnd(){
+  if (!TD) return;
+  clearTimeout(TD.timer); cancelAnimationFrame(TD.raf);
+  TD.ghost?.remove(); TD.el.classList.remove('dragging'); clearHints();
+  TD = null;
+}
+function tdZone(){
+  const under = document.elementFromPoint(TD.x, TD.y);
+  const z = under?.closest(DROP_SEL);
+  clearHints();
+  TD.zone = z && canDrop(z, TD.ref) ? z : null;
+  if (TD.zone) TD.zone.classList.add('drop-hint');
+}
+function tdFrame(){
+  if (!TD || !TD.active) return;
+  const sc = document.getElementById('scroll'), edge = 70;
+  if (TD.y < edge) sc.scrollTop -= Math.ceil((edge - TD.y) / 6);
+  else if (TD.y > innerHeight - edge) sc.scrollTop += Math.ceil((TD.y - innerHeight + edge) / 6);
+  const hz = document.elementFromPoint(TD.x, TD.y)?.closest('.days-wrap, .board-wrap');
+  if (hz){ const r = hz.getBoundingClientRect(); if (TD.x < r.left + 40) hz.scrollLeft -= 10; else if (TD.x > r.right - 40) hz.scrollLeft += 10; }
+  tdZone();
+  TD.raf = requestAnimationFrame(tdFrame);
+}
+document.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1) { tdEnd(); return; }
+  const el = e.target.closest?.('[data-drag],[data-drag-step]');
+  if (!el || e.target.closest('button,input,select,textarea,a')) return;
+  const p = e.touches[0];
+  TD = { el, ref: dragRef(el), x: p.clientX, y: p.clientY, x0: p.clientX, y0: p.clientY, active: false, zone: null };
+  TD.timer = setTimeout(() => {
+    if (!TD) return;
+    TD.active = true; el.classList.add('dragging');
+    const r = el.getBoundingClientRect();
+    TD.dx = TD.x - r.left; TD.dy = TD.y - r.top;
+    const g = el.cloneNode(true); g.classList.remove('dragging'); g.classList.add('drag-ghost'); g.removeAttribute('data-drag'); g.removeAttribute('data-drag-step');
+    g.style.width = r.width + 'px'; g.style.left = r.left + 'px'; g.style.top = r.top + 'px';
+    document.body.appendChild(g); TD.ghost = g;
+    try { navigator.vibrate?.(12); } catch(err){}
+    TD.raf = requestAnimationFrame(tdFrame);
+  }, 350);
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!TD) return;
+  const p = e.touches[0];
+  if (!TD.active){ if (Math.hypot(p.clientX - TD.x0, p.clientY - TD.y0) > 10) tdEnd(); return; }   // it's a scroll, not a drag
+  e.preventDefault();
+  TD.x = p.clientX; TD.y = p.clientY;
+  TD.ghost.style.left = (TD.x - TD.dx) + 'px'; TD.ghost.style.top = (TD.y - TD.dy) + 'px';
+}, { passive: false });
+document.addEventListener('touchend', e => {
+  if (!TD) return;
+  if (TD.active){ e.preventDefault(); touchDropAt = Date.now(); tdZone(); const z = TD.zone, ref = TD.ref; tdEnd(); if (z) dropOn(z, ref); }
+  else tdEnd();
+}, { passive: false });
+document.addEventListener('touchcancel', tdEnd);
+document.addEventListener('contextmenu', e => { if (TD) e.preventDefault(); });
+// the tap that ends a drag shouldn't also open the task
+document.addEventListener('click', e => { if (Date.now() - touchDropAt < 500){ e.stopPropagation(); e.preventDefault(); } }, true);
 
 /* ============ Action helpers ============ */
 function qaWhen(){
