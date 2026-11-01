@@ -349,6 +349,7 @@ textarea.notes:focus{border-color:var(--accent)}
 .side-star{color:var(--wait);margin-right:3px}
 .btn.focus-on{color:var(--wait);border-color:var(--wait)}
 .ms-h.focus{box-shadow:inset 3px 0 0 var(--wait)}
+.ord.handed-row{opacity:.72}
 .checkon{color:var(--wait);font-weight:600}
 .pk-more{display:block;border:0;background:none;color:var(--accent);font-size:12px;padding:4px 14px 6px 29px}
 .pk-goal{padding:4px 14px 0 29px;font-size:11.5px;color:var(--muted)}
@@ -630,7 +631,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v28';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v29';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1553,7 +1554,10 @@ function renderToday(){
       const pos = new Map(ord.map((k, i) => [k, i])), base = entries.slice();
       entries.sort((a, b) => { const pa = pos.get(ordKey(a)), pb = pos.get(ordKey(b)); if (pa !== undefined && pb !== undefined) return pa - pb; if (pa !== undefined) return -1; if (pb !== undefined) return 1; return base.indexOf(a) - base.indexOf(b); });
     }
-    left += entries.length ? entries.map(e => e.c ? `<div class="ord" data-ord="${ordKey(e)}" draggable="true" data-drag-step="${e.t.id}|${e.c.id}">${stepRow(e.t, e.c, true, 'today')}<span class="grip" data-grip aria-hidden="true">⋮⋮</span></div>` : `<div class="ord" data-ord="${ordKey(e)}">${taskRow(e.t, 'today')}<span class="grip" data-grip aria-hidden="true">⋮⋮</span></div>`).join('') : `<div class="empty">${isToday ? 'Nothing planned for today yet. Pick tasks or steps from your projects on the right.' : 'Nothing planned yet. Pick tasks or steps on the right.'}</div>`;
+    // handed off today (your part done): out of the way at the end, just above Done
+    const handedToday = e => !e.c && e.t.status === 'waiting' && e.t.handedOff === D;
+    entries.splice(0, entries.length, ...entries.filter(e => !handedToday(e)), ...entries.filter(handedToday));
+    left += entries.length ? entries.map(e => e.c ? `<div class="ord" data-ord="${ordKey(e)}" draggable="true" data-drag-step="${e.t.id}|${e.c.id}">${stepRow(e.t, e.c, true, 'today')}<span class="grip" data-grip aria-hidden="true">⋮⋮</span></div>` : `<div class="ord ${handedToday(e) ? 'handed-row' : ''}" data-ord="${ordKey(e)}">${taskRow(e.t, 'today')}<span class="grip" data-grip aria-hidden="true">⋮⋮</span></div>`).join('') : `<div class="empty">${isToday ? 'Nothing planned for today yet. Pick tasks or steps from your projects on the right.' : 'Nothing planned yet. Pick tasks or steps on the right.'}</div>`;
     if (doneP.length || flatDone.length) left += `<div class="grp"><div class="grp-h">Done<span class="n">${doneP.length + flatDone.length}</span></div>${doneP.map(t => taskRow(t,'today')).join('')}${flatDone.map(({t,c}) => stepRow(t, c, true, 'today')).join('')}</div>`;
   }
   left += `</div></div>`;
