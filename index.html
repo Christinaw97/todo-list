@@ -889,7 +889,7 @@ function parseQuick(raw){
   { const tt = extractTime(s); if (tt.time){ out.time = tt.time; s = tt.text; } }
   const wm = s.match(/\s(?:waiting on|waiting for|wait for|waiting)\s+([A-Za-z][\w'’\-]*)/i);
   if (wm) out.waitingOn = wm[1][0].toUpperCase() + wm[1].slice(1);
-  if (!out.target) out.target = findTarget(s);
+  if (out.target) out.tagged = true; else out.target = findTarget(s);
   out.title = s.replace(/\s+/g, ' ').replace(/\s+([,.;:!?])/g, '$1').replace(/^[\s,;:]+|[\s,;:]+$/g, '').trim() || raw.trim();
   return out;
 }
@@ -923,8 +923,9 @@ function previewHTML(text, fbTarget, fbWhen, onlyIfFound){
   if (lines.length > 8) rows.push(`<div>and ${lines.length - 8} more</div>`);
   return rows.join('');
 }
-function addParsed(line, fbTarget, fbWhen, extra0){
+function addParsed(line, fbTarget, fbWhen, extra0, strict){
   const p = parseQuick(line);
+  if (strict && !p.tagged) p.target = '';   // typed inside a goal or column: stay there unless a #tag says otherwise
   const extra = { ...(extra0 || {}) };
   if (p.target && p.target !== fbTarget) delete extra.milestone;
   if (p.due) extra.due = p.due;
@@ -1912,6 +1913,7 @@ document.addEventListener('keydown', e => {
     if (UI.open){ UI.open = null; render(); return; }
   }
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && e.target.id === 'cap-text'){ e.preventDefault(); capAdd(); return; }
+  if (e.key === 'Enter' && (e.isComposing || e.keyCode === 229)) return;   // still choosing characters in an input method
   if (e.key === 'Enter' && !e.shiftKey){
     const k = e.target.dataset?.enter;
     if (k === 'qa-add'){ e.preventDefault(); qaAdd(); }
@@ -1920,8 +1922,9 @@ document.addEventListener('keydown', e => {
     else if (e.target.dataset?.kadd){
       e.preventDefault();
       const el = e.target, v = el.value.trim(); if (!v) return;
-      addParsed(v, 'p:' + el.dataset.kadd, 'none', el.dataset.ms ? { milestone: el.dataset.ms } : null);
+      const nt = addParsed(v, 'p:' + el.dataset.kadd, 'none', el.dataset.ms ? { milestone: el.dataset.ms } : null, true);
       el.value = ''; render(); document.getElementById(el.id)?.focus();
+      if (nt.project !== el.dataset.kadd) showNote('Added “' + nt.title + '” to ' + projLabel(nt) + ' (from the #tag).');
     }
     else if (k === 'cl-add'){ e.preventDefault(); clAdd(); }
     else if (e.target.id === 'd-title'){ e.preventDefault(); e.target.blur(); }
@@ -2048,9 +2051,11 @@ function qaAdd(){
   UI.lastProj = target; lsSet('lt_lastproj', target);
   const ms = document.getElementById('qa-ms')?.value || '';
   if (UI.view === 'proj') { UI.lastMs[UI.proj] = ms; }
-  addParsed(v, target, when, ms && target === 'p:' + UI.proj ? { milestone: ms } : null);
+  const nt = addParsed(v, target, when, ms && target === 'p:' + UI.proj ? { milestone: ms } : null);
   inp.value = '';
   render();
+  const landed = nt.project ? 'p:' + nt.project : nt.cat ? 'c:' + nt.cat : '';
+  if (landed !== target) showNote('Added “' + nt.title + '” to ' + projLabel(nt) + ', because the text mentions it.');
   document.getElementById('qa-text')?.focus();
 }
 function normTime(v){
