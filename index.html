@@ -392,6 +392,9 @@ body.v-board #view{max-width:none}
 .sync-pill:hover{color:var(--side-strong)}
 .sync-pill i{width:7px;height:7px;border-radius:50%;display:inline-block}
 
+.gh-err{margin-top:14px;padding:10px 12px;border-radius:8px;background:var(--danger-soft);border:1px solid color-mix(in srgb,var(--danger) 40%,transparent);color:var(--text);font-size:13px;line-height:1.5}
+.gh-err b{color:var(--danger)}
+
 /* Setup */
 .setup{max-width:520px;margin:60px auto;text-align:center}
 .setup h1{font-size:22px;margin:0 0 8px}
@@ -570,8 +573,8 @@ function ghUrl(cfg){ return `https://api.github.com/repos/${encodeURIComponent(c
 class GhError extends Error { constructor(msg, kind){ super(msg); this.kind = kind; } }
 async function ghCheckRepo(cfg){
   const r = await fetch(`https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}`, { headers: ghHeaders(cfg), cache:'no-store' });
-  if (r.status === 401) throw new GhError('GitHub didn’t accept the token. Check that you copied all of it and that it hasn’t expired.', 'auth');
-  if (r.status === 404 || r.status === 403) throw new GhError('Couldn’t find that repository with this token. Check the username and repo name, and that the token was given access to this repo.', 'auth');
+  if (r.status === 401) throw new GhError('GitHub didn’t accept the token (401). Check that you copied all of it, with no spaces at the start or end, and that it hasn’t expired.', 'auth');
+  if (r.status === 404 || r.status === 403) throw new GhError('GitHub says it can’t find ' + cfg.owner + '/' + cfg.repo + ' for this token (' + r.status + '). Check the spelling, and that when you made the token you chose “Only select repositories” and picked ' + cfg.repo + '.', 'auth');
   if (!r.ok) throw new GhError('GitHub returned an error (' + r.status + ').', 'net');
   const j = await r.json();
   if (!j.private) throw new GhError('That repository is public, so anyone could read your tasks. Make it private on GitHub (Settings › Danger zone › Change visibility), then connect again.', 'public');
@@ -1446,9 +1449,9 @@ function renderBoard(){
 }
 
 function renderSync(){
-  const cfg = ghCfg() || {};
-  const stateLine = !ghCfg() ? 'Not connected. Everything is saved on this device only.'
-    : SYNC.state === 'error' ? '⚠ ' + esc(SYNC.msg)
+  const cfg = { ...(ghCfg() || {}), ...(UI.ghDraft || {}) };
+  const stateLine = SYNC.state === 'error' ? '' : SYNC.state === 'syncing' && !ghCfg() ? 'Connecting…'
+    : !ghCfg() ? 'Not connected. Everything is saved on this device only.'
     : SYNC.state === 'offline' ? 'Offline. Changes are saved on this device and will sync when you’re back online.'
     : SYNC.state === 'syncing' ? 'Syncing…'
     : SYNC.last ? 'Last synced ' + new Date(SYNC.last).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) + '.' : 'Connected.';
@@ -1463,8 +1466,9 @@ function renderSync(){
         <label class="fld"><span class="lbl">Branch</span><input id="gh-branch" value="${esc(cfg.branch || 'main')}" autocapitalize="off" spellcheck="false"></label>
         <label class="fld"><span class="lbl">File</span><input id="gh-path" value="${esc(cfg.path || 'tracker.json')}" autocapitalize="off" spellcheck="false"></label>
       </div>
+      ${SYNC.state === 'error' ? `<div class="gh-err" role="alert"><b>Couldn’t connect.</b> ${esc(SYNC.msg)}</div>` : ''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-        <button class="btn pri" data-act="gh-connect">${ghCfg() ? 'Save and sync' : 'Connect'}</button>
+        <button class="btn pri" data-act="gh-connect" ${SYNC.state === 'syncing' ? 'disabled' : ''}>${SYNC.state === 'syncing' ? 'Connecting…' : ghCfg() ? 'Save and sync' : 'Connect'}</button>
         ${ghCfg() ? '<button class="btn" data-act="gh-sync">Sync now</button><button class="btn warn ' + (UI.armed==='gh-off'?'armed':'') + '" data-act="gh-off">' + (UI.armed==='gh-off' ? 'Disconnect this device?' : 'Disconnect') + '</button>' : ''}
       </div>
       <div class="hint">The token is stored only in this browser (or this home-screen app). Each device needs it pasted once. If a device is lost, delete the token on GitHub and make a new one.</div>
@@ -1948,11 +1952,13 @@ async function ghConnect(){
     branch: document.getElementById('gh-branch').value.trim() || 'main',
     path: document.getElementById('gh-path').value.trim() || 'tracker.json'
   };
+  UI.ghDraft = { owner:cfg.owner, repo:cfg.repo, branch:cfg.branch, path:cfg.path };
   if (!cfg.owner || !cfg.repo || !cfg.token){ setSync('error', 'Fill in the username, repo and token.'); render(); return; }
   setSync('syncing'); render();
   try {
     await ghCheckRepo(cfg);
     lsSet(LS_GH, JSON.stringify(cfg));
+    UI.ghDraft = null;
     SYNC.state = 'idle';
     await sync();
     if (SYNC.state === 'ok') showNote('Connected. This device is now synced with ' + cfg.owner + '/' + cfg.repo + '.');
