@@ -9,6 +9,10 @@ A personal tracker for projects, goals, deadlines, and your weekly and daily pla
 - Organize tasks into categories and projects, and set deadlines for tasks or whole goals
 - Plan your week and your day, and drag tasks between days
 - See everything on a board
+- Repeating tasks, time estimates with a daily total, and an "important" flag
+- Search every task, including finished ones (press `/`)
+- Undo a finish, delete or move for a few seconds afterwards
+- Review the week, copy a summary of a student's or collaborator's tasks, and export a list of finished work for reports
 - Work offline; changes are saved on your device first
 - Install it like an app on iPhone, Android, Mac or Windows
 - Sync between devices through a private GitHub repo that you own (optional)

@@ -355,6 +355,35 @@ textarea.notes:focus{border-color:var(--accent)}
 .ditem .blk{font-family:var(--mono);font-size:10px;color:var(--accent)}
 .chip.proj.link{cursor:pointer}
 .chip.proj.link:hover{color:var(--accent);border-color:var(--accent)}
+#undo-bar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:310;display:flex;align-items:center;gap:12px;padding:7px 7px 7px 16px;border-radius:10px;background:#1d2633;color:#e5ecf5;box-shadow:var(--shadow);font-size:13.5px;max-width:calc(100vw - 32px)}
+#undo-bar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#undo-bar button{flex-shrink:0;background:none;border:1px solid #55667e;color:#8fb6ff;font:inherit;font-weight:600;padding:4px 14px;border-radius:6px;cursor:pointer}
+#undo-bar button:hover{background:rgba(255,255,255,.08)}
+.chip.imp{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent);background:var(--danger-soft);font-weight:600}
+.chip.rep{color:var(--accent)}
+.q.imp-on{color:var(--danger);border-color:var(--danger);background:var(--danger-soft)}
+.load{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.load.over{color:var(--danger);font-weight:600}
+.day-h .load{margin-left:auto}
+.day-h em + .load{margin-left:6px}
+.srch-in{width:100%;font-size:15px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);outline:none;margin-bottom:14px}
+.srch-in:focus{border-color:var(--accent)}
+.srch-snip{font-size:12px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srch-snip b{font-weight:500;color:var(--faint)}
+mark{background:var(--wait-bg);color:inherit;padding:0 1px;border-radius:2px;box-shadow:0 0 0 1px var(--wait-line)}
+.review{padding:14px 16px}
+.review h3{font-size:12.5px;margin:14px 0 4px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.review h3:first-child{margin-top:0}
+.review .rv-stats{display:flex;gap:8px;flex-wrap:wrap}
+.review .rv-stat{border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:12.5px;color:var(--muted)}
+.review .rv-stat b{display:block;font-size:18px;color:var(--text);font-family:var(--mono);font-weight:500}
+.review .rv-stat.bad b{color:var(--danger)}
+.review .rv-list{border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+.review .rv-row{font-size:13px;padding:5px 0;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.review .rv-row .chip{cursor:default}
+.review .rv-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.log-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
+.log-tools select{border:1px solid var(--line);border-radius:6px;padding:5px 8px;background:var(--panel);color:var(--text)}
 .crumb-link{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}
 .crumb-link:hover{color:var(--accent);text-decoration:underline}
 .checkon{color:var(--wait);font-weight:600}
@@ -505,6 +534,7 @@ body.v-board .kcol-b > *{flex-shrink:0}
   .day.past.noitems{display:none}
   .day{min-height:0}
   #fab{display:grid;place-items:center}
+  #undo-bar{left:16px;right:88px;transform:none;max-width:none}
   .today-grid{grid-template-columns:1fr}
   .board-wrap{margin:0 -14px;padding-left:14px;padding-right:14px;scroll-snap-type:x proximity;scroll-padding-inline:14px}
   .kcol{width:82vw;max-width:300px}
@@ -645,8 +675,73 @@ function dueIn(d){
   return 'in ' + Math.round(n/30.4) + ' mo';
 }
 
+/* Repeating tasks: finishing one adds the next, on the next date after today */
+const REPEATS = [['daily','Every day'],['weekdays','Every weekday (Mon–Fri)'],['weekly','Every week'],['2weeks','Every 2 weeks'],['monthly','Every month'],['yearly','Every year']];
+const REPEAT_SHORT = { daily:'daily', weekdays:'weekdays', weekly:'weekly', '2weeks':'every 2 wks', monthly:'monthly', yearly:'yearly' };
+function addMonthsClamp(s, n){ const d = parse(s), day = d.getDate(); const x = new Date(d.getFullYear(), d.getMonth() + n, 1); x.setDate(Math.min(day, new Date(x.getFullYear(), x.getMonth() + 1, 0).getDate())); return ymd(x); }
+function repStep(s, rep, k){
+  if (rep === 'daily') return addDays(s, k);
+  if (rep === 'weekly') return addDays(s, 7 * k);
+  if (rep === '2weeks') return addDays(s, 14 * k);
+  if (rep === 'monthly') return addMonthsClamp(s, k);
+  if (rep === 'yearly') return addMonthsClamp(s, 12 * k);
+  if (rep === 'weekdays'){ let d = s; for (let i = 0; i < k; i++){ do d = addDays(d, 1); while (parse(d).getDay() === 0 || parse(d).getDay() === 6); } return d; }
+  return s;
+}
+// Where the next copy goes: its planned day (if it had one), its deadline (if it had one), each moved forward together
+function repNext(t){
+  if (!t.repeat || !REPEAT_SHORT[t.repeat]) return null;
+  const td = today(), anchor = t.day || t.due || td;
+  let k = 1; while (repStep(anchor, t.repeat, k) <= td && k < 2000) k++;
+  const out = { day: '', due: '' };
+  if (t.day || !t.due) out.day = repStep(anchor, t.repeat, k);
+  if (t.due) out.due = repStep(t.due, t.repeat, k);
+  return out;
+}
+function spawnNext(t){
+  if (t.spawned && M.tasks.has(t.spawned)) return null;   // already made (finished, reopened, finished again)
+  const nx = repNext(t); if (!nx) return null;
+  const n = clone(t); delete n._u;
+  Object.assign(n, { id: uid('t'), status: 'todo', doneDate: '', created: new Date().toISOString(), statusLog: [], handedOff: '', pingBy: '', pingCount: 0, lastPing: '', spawned: '', waitingOn: '', autoWk: '',
+    day: nx.day, due: nx.due || '', dayTo: nx.day && t.day && t.dayTo > t.day ? addDays(nx.day, dayDiff(t.day, t.dayTo)) : '' });
+  n.week = n.day ? weekOf(n.day) : ''; n.weeks = n.week ? [n.week] : [];
+  n.checklist = stepsOf(t).map(c => ({ ...c, id: uid('k'), done: false, doneDate: '', day: '', week: '', time: '' }));
+  t.spawned = n.id;
+  stamp(n); M.tasks.set(n.id, n);
+  return n;
+}
+/* Time estimates (minutes) */
+function parseDur(v){
+  v = String(v || '').trim().toLowerCase().replace(/^[~≈]\s*/, '');
+  if (!v) return 0;
+  let m;
+  if ((m = v.match(/^(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours?)\s*(?:(\d+)\s*(?:m|min|mins|minutes?)?)?$/))) return Math.round(+m[1] * 60 + +(m[2] || 0));
+  if ((m = v.match(/^(\d+)\s*(?:m|min|mins|minutes?)$/))) return +m[1];
+  if ((m = v.match(/^(\d+):(\d{2})$/))) return +m[1] * 60 + +m[2];
+  if ((m = v.match(/^(\d+(?:\.\d+)?)$/))) return +m[1] <= 12 ? Math.round(+m[1] * 60) : Math.round(+m[1]);   // a bare number: up to 12 means hours
+  return null;
+}
+const fmtDur = n => !n ? '' : n < 60 ? n + 'm' : Math.floor(n / 60) + 'h' + (n % 60 ? ' ' + (n % 60) + 'm' : '');
+const dayCap = () => Math.round((+M.meta?.dayHours || 6) * 60);
+const estOn = t => t.est ? Math.round(t.est / blockLen(t)) : 0;
+function dayLoad(D){ let n = 0; for (const t of M.tasks.values()) if (mine(t) && isOpen(t) && onDay(t, D) && !parked(t)) n += estOn(t); return n; }
+function loadTag(D, brief){
+  const n = dayLoad(D); if (!n) return '';
+  const over = n > dayCap();
+  return `<span class="load ${over ? 'over' : ''}" title="${over ? 'More than the ' + fmtDur(dayCap()) + ' you said you can plan in a day (change it in Sync &amp; backup)' : 'Estimated time for the tasks planned'}">≈ ${fmtDur(n)}${brief ? '' : ' of ' + fmtDur(dayCap())}</span>`;
+}
+/* Overdue tasks join this week's list on their own (if turned on); taking one off keeps it off for the week */
+function autoWeekOverdue(){
+  if (!M.meta?.autoOverdue) return;
+  const cw = curWeek(), td = today();
+  for (const t of M.tasks.values()){
+    if (!isOpen(t) || !mine(t) || t.status === 'waiting' || !effDue(t) || effDue(t) > td || effWeek(t) || t.autoWk === cw) continue;
+    t.week = cw; if (!hasWeek(t, cw)) t.weeks = [...(t.weeks || []), cw]; t.autoWk = cw; saveTask(t);
+  }
+}
+
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v33';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v34';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -837,7 +932,7 @@ const UI = {
   lastMs: {},
   openMs: new Set()
 };
-const HASH_VIEWS = ['today','week','board','add','waiting','log','inbox','sync','people','archived'];
+const HASH_VIEWS = ['today','week','board','add','waiting','log','inbox','sync','people','archived','search'];
 function applyHash(){
   const h = location.hash.slice(1);
   if (HASH_VIEWS.includes(h)){ const prev = UI.view; UI.view = h; if (h === 'week' && prev !== 'week') UI.week = curWeek(); if (h === 'today' && prev !== 'today') UI.day = today(); }
@@ -895,7 +990,7 @@ function setStatus(t, s){
   if (s === t.status) return;
   const from = t.status;
   t.status = s;
-  if (s === 'done') t.doneDate = today();
+  if (s === 'done'){ t.doneDate = today(); if (t.repeat) spawnNext(t); }
   else t.doneDate = '';
   if (s === 'waiting'){
     t.pingBy = defaultPingDay(t);
@@ -912,7 +1007,7 @@ function setStatus(t, s){
 }
 function toggleDone(id){
   const t = M.tasks.get(id); if (!t) return;
-  setStatus(t, t.status === 'done' ? 'todo' : 'done');
+  setStatusUndo(t, t.status === 'done' ? 'todo' : 'done');
   render();
 }
 function markPinged(id){
@@ -1012,6 +1107,15 @@ function parseQuick(raw){
   const out = { title:'', target:'', when:'', due:'', waitingOn:'' };
   s = s.replace(/\s#([\w\-.]+)/g, (m, tag) => { const t = findTarget(tag.replace(/[-_.]/g, ' ')); if (t){ out.target = t; return ' '; } return m; });
   const td = today(), tidx = (parse(td).getDay() + 6) % 7;
+  s = s.replace(/\s[~≈]\s?(\d+(?:\.\d+)?\s*(?:h|hr|hrs|hours?|m|min|mins|minutes?)(?:\s*\d+\s*(?:m|min|mins)?)?)(?=[\s.,;:!?])/i, (m, v) => { const n = parseDur(v); if (!n) return m; out.est = n; return ' '; });
+  s = s.replace(/\s(?:!+|!important)(?=[\s.,;:?])/i, () => { out.star = true; return ' '; });
+  s = s.replace(/\severy\s+(day|weekday|week|other\s+week|2\s+weeks|two\s+weeks|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues?|wed|thu(?:rs?)?|fri|sat|sun)(?=[\s.,;:!?])/i, (m, w) => {
+    w = w.toLowerCase().replace(/\s+/g, ' ');
+    const map = { day:'daily', weekday:'weekdays', week:'weekly', 'other week':'2weeks', '2 weeks':'2weeks', 'two weeks':'2weeks', month:'monthly', year:'yearly' };
+    if (map[w]) out.repeat = map[w];
+    else { out.repeat = 'weekly'; const i = ['mon','tue','wed','thu','fri','sat','sun'].indexOf(w.slice(0,3)); const ti = (parse(today()).getDay() + 6) % 7; const d = addDays(today(), (i - ti + 7) % 7); out.repeatDay = d === today() ? 'today' : d; }
+    return ' ';
+  });
   const putDate = (pre, v) => { pre = (pre || '').toLowerCase(); if (pre === 'due' || pre === 'by') out.due = v; else out.when = v === td ? 'today' : v; };
   s = s.replace(new RegExp('\\s(?:(due|by|on)\\s+)?' + MONTH_RE + '\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?(?=[\\s.,;:!?])', 'gi'), (m, pre, mon, d, y) => {
     if (/^may$/i.test(mon) && !pre) return m;
@@ -1043,6 +1147,7 @@ function parseQuick(raw){
   s = s.replace(/\s@([A-Za-z][\w'’\-]*)/g, (m, name) => { out.who = canonPerson(name); return ' '; });
   const wm = s.match(/\s(?:waiting on|waiting for|wait for|waiting)\s+([A-Za-z][\w'’\-]*)/i);
   if (wm) out.waitingOn = wm[1][0].toUpperCase() + wm[1].slice(1);
+  if (out.repeatDay && !out.when) out.when = out.repeatDay;
   if (out.target) out.tagged = true; else out.target = findTarget(s);
   out.title = s.replace(/\s+/g, ' ').replace(/\s+([,.;:!?])/g, '$1').replace(/^[\s,;:]+|[\s,;:]+$/g, '').trim() || raw.trim();
   return out;
@@ -1066,7 +1171,7 @@ function previewHTML(text, fbTarget, fbWhen, onlyIfFound){
   const rows = [];
   for (const l of lines.slice(0, 8)){
     const p = parseQuick(l);
-    if (onlyIfFound && !p.target && !p.when && !p.due && !p.waitingOn && !p.who) continue;
+    if (onlyIfFound && !p.target && !p.when && !p.due && !p.waitingOn && !p.who && !p.est && !p.star && !p.repeat) continue;
     const bits = [targetName(p.target || fbTarget)];
     const w = whenName(p.when || fbWhen); if (w) bits.push(w);
     if (p.who) bits.push('for ' + p.who);
@@ -1074,6 +1179,9 @@ function previewHTML(text, fbTarget, fbWhen, onlyIfFound){
     if (p.blockDays > 1) bits.push(p.blockDays + ' days');
     if (p.waitingOn) bits.push('waiting on ' + p.waitingOn);
     if (p.time) bits.push(p.time);
+    if (p.est) bits.push('≈ ' + fmtDur(p.est));
+    if (p.repeat) bits.push('⟳ ' + REPEAT_SHORT[p.repeat]);
+    if (p.star) bits.push('important');
     rows.push(`<div><b>${esc(p.title)}</b> <span class="to">→ ${esc(bits.join(', '))}</span></div>`);
   }
   if (lines.length > 8) rows.push(`<div>and ${lines.length - 8} more</div>`);
@@ -1087,6 +1195,9 @@ function addParsed(line, fbTarget, fbWhen, extra0, strict){
   if (p.due) extra.due = p.due;
   if (p.who) extra.who = p.who;
   if (p.time) extra.time = p.time;
+  if (p.est) extra.est = p.est;
+  if (p.star) extra.star = true;
+  if (p.repeat) extra.repeat = p.repeat;
   if (p.waitingOn){ extra.status = 'waiting'; extra.waitingOn = p.waitingOn; }
   const when = p.when || fbWhen;
   const t = newTask(p.title, p.target || fbTarget, when === 'none' ? '' : when, extra);
@@ -1110,6 +1221,7 @@ function projChip(t){
 }
 function chipsFor(t, ctx){
   const out = [];
+  if (t.star && t.status !== 'done') out.push(`<span class="chip imp" title="Marked important">! important</span>`);
   if (t.status !== 'done' && ctx !== 'proj' && taskFocus(t)) out.push(`<span class="chip focus" title="Part of this week's priorities">★</span>`);
   if (whoOf(t) && ctx !== 'people') out.push(`<span class="chip who" title="${esc(whoOf(t))} is doing this${!t.who && goalWho(t) ? ' (assigned with the goal)' : ''}">👤 ${esc(whoOf(t))}</span>`);
   if (ctx !== 'proj') out.push(projChip(t));
@@ -1141,6 +1253,8 @@ function chipsFor(t, ctx){
     const d = t.checklist.filter(c => c.done).length;
     out.push(`<span class="chip mono">☑ ${d}/${t.checklist.length}</span>`);
   }
+  if (t.est && t.status !== 'done') out.push(`<span class="chip mono" title="Estimated time">≈ ${fmtDur(t.est)}</span>`);
+  if (t.repeat && REPEAT_SHORT[t.repeat]) out.push(`<span class="chip mono rep" title="Repeats: when you finish it, the next one is added">⟳ ${REPEAT_SHORT[t.repeat]}</span>`);
   if (t.notes) out.push(`<span class="chip">notes</span>`);
   return out.join('');
 }
@@ -1255,6 +1369,7 @@ function groupByCat(list){
 const statusRank = { doing:0, waiting:1, todo:2, done:3 };
 const sortTasks = list => list.sort((a,b) =>
   (statusRank[a.status]-statusRank[b.status]) ||
+  ((b.star && b.status !== 'done' ? 1 : 0) - (a.star && a.status !== 'done' ? 1 : 0)) ||
   ((effDue(a)||'9999') < (effDue(b)||'9999') ? -1 : (effDue(a)||'9999') > (effDue(b)||'9999') ? 1 : 0) ||
   (a.created < b.created ? -1 : 1));
 
@@ -1275,6 +1390,7 @@ function render(){
     const ws = weekStart();
     if (UI.ws !== ws){ UI.week = curWeek(); UI.ws = ws; }   // first load, or the week start changed (here or on another device)
     else UI.week = normW(UI.week) || curWeek();
+    autoWeekOverdue();
   }
   rendering = true;
   const scrollSaved = saveScroll(), viewKey = UI.view + '|' + (UI.proj || '') + '|' + (UI.cat || '') + '|' + (UI.open || '');
@@ -1297,6 +1413,7 @@ function render(){
   else if (UI.view === 'people') v.innerHTML = renderPeople();
   else if (UI.view === 'archived') v.innerHTML = renderArchived();
   else if (UI.view === 'log') v.innerHTML = renderLog();
+  else if (UI.view === 'search') v.innerHTML = renderSearch();
   else if (UI.view === 'cat') v.innerHTML = renderCat();
   else if (UI.view === 'proj') v.innerHTML = renderProj();
   v.insertAdjacentHTML('afterbegin', `<div id="note" class="${noteText?'show':''}">${esc(noteText)}</div>`);
@@ -1334,6 +1451,7 @@ function renderSide(){
   const due = waiting.filter(pingDue).length;
   let h = `<div class="brand">Todo List</div>${syncPill()}
     <button class="nav ${UI.view==='add'?'on':''}" data-act="nav" data-v="add"><span class="ic">+</span>Quick add</button>
+    <button class="nav ${UI.view==='search'?'on':''}" data-act="nav" data-v="search" title="Search (press /)"><span class="ic">⌕</span>Search</button>
     <button class="nav ${UI.view==='today'?'on':''}" data-act="nav" data-v="today"><span class="ic">☀</span>Today<span class="ct">${(openMine.filter(t => onDay(t, today())).length + allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sDay(c) === today() && effDay(t) !== today()).length)||''}</span></button>
     <button class="nav ${UI.view==='week'&&UI.week===curWeek()?'on':''}" data-act="nav" data-v="week"><span class="ic">◷</span>This week<span class="ct">${wk||''}</span></button>
     <button class="nav ${UI.view==='waiting'?'on':''}" data-act="nav" data-v="waiting"><span class="ic">⏳</span>Waiting on others<span class="ct ${due?'hot':''}">${due ? due+' to ping' : (waiting.length||'')}</span></button>
@@ -1436,10 +1554,12 @@ function renderWeek(){
       <button class="icon-btn" data-act="wk-next" aria-label="Next week">›</button>
       ${!isCur ? `<button class="btn" data-act="wk-now">Back to this week</button>` : ''}
       <span class="spacer"></span>
+      ${isCur ? `<button class="btn ${!UI.review && dayDiff(W, td) >= 4 ? 'pri' : ''}" data-act="review" title="Look back at the week and plan the next one">${UI.review ? 'Hide review' : 'Review week'}</button>` : ''}
       <button class="btn" data-act="export">Export week (.md)</button>
     </div>
     <div class="sub">${weekLabel(W)}. ${doneW.length} done${isPast ? '' : `, ${openN} open`}${carried.length ? `, ${carried.length} carried forward` : ''}.</div></div>`;
 
+  if (isCur && UI.review) h += reviewSec(W);
   if (!isPast || focusOf(W).length) h += focusSec(W);
 
   // Follow-ups due
@@ -1496,7 +1616,7 @@ function renderWeek(){
     const items = [...items0.filter(t => !parked(t)), ...items0.filter(parked)];
     const dSteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === d : (isOpen(t) && sDay(c) === d)));
     const cls = d === td ? 'today' : d < td ? 'past' : '';
-    h += `<div class="day ${cls} ${items.length||dSteps.length?'':'noitems'}" ${d >= td ? `data-drop="${d}"` : ''}><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${dayName(d)}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}</div><div class="day-list">`;
+    h += `<div class="day ${cls} ${items.length||dSteps.length?'':'noitems'}" ${d >= td ? `data-drop="${d}"` : ''}><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${dayName(d)}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}${d >= td ? loadTag(d, true) : ''}</div><div class="day-list">`;
     if (!items.length && !dSteps.length) h += `<div class="day-empty">${d < td ? '' : 'Drop a task here'}</div>`;
     h += dSteps.map(({t,c}) => `<div class="ditem ${c.done?'is-done':''}" ${c.done ? '' : `draggable="true" data-drag-step="${t.id}|${c.id}"`}>
       <button class="sq ${c.done?'done':''}" data-act="step-toggle" data-id="${t.id}" data-s="${c.id}" aria-label="Toggle step">${c.done?'✓':''}</button>
@@ -1572,7 +1692,7 @@ function renderToday(){
   // left: the day's list
   let left = '';
   if (!isPast) left += quickAdd(`<option value="${D}">${isToday ? 'Today' : dname}</option><option value="week">This week</option><option value="none">No date</option>`);
-  left += `<div class="sec" style="margin-top:${isPast?0:16}px"><div class="sec-h"><h2>${isPast ? 'Done that day' : 'Plan'}</h2><span class="n">${isPast ? doneN : (openP.length + flatOpen.length) + ' to do'}</span>${!isPast && dayOrder(D).length ? `<span class="spacer"></span><button class="q" data-act="ord-reset" data-d="${D}" title="Go back to ordering by time and project">Reset order</button>` : ''}</div><div class="card" data-drop="${D}" data-order-day="${D}">`;
+  left += `<div class="sec" style="margin-top:${isPast?0:16}px"><div class="sec-h"><h2>${isPast ? 'Done that day' : 'Plan'}</h2><span class="n">${isPast ? doneN : (openP.length + flatOpen.length) + ' to do'}</span>${isPast ? '' : loadTag(D)}${!isPast && dayOrder(D).length ? `<span class="spacer"></span><button class="q" data-act="ord-reset" data-d="${D}" title="Go back to ordering by time and project">Reset order</button>` : ''}</div><div class="card" data-drop="${D}" data-order-day="${D}">`;
   if (isPast) left += doneN ? doneP.map(t => taskRow(t,'today')).join('') + daySteps.filter(x => x.c.done).map(({t,c}) => stepRow(t, c, true, 'today')).join('') : `<div class="empty">Nothing was marked done.</div>`;
   else {
     const catIdx = t => { const c = taskCat(t); const i = cats().indexOf(c); return i < 0 ? 99 : i; };
@@ -1662,7 +1782,7 @@ function renderPeople(){
     const ts = tasks().filter(t => whoOf(t).toLowerCase() === p.toLowerCase());
     const open = sortTasks(ts.filter(isOpen)), done = ts.filter(t => !isOpen(t) && (t.doneDate || '') >= cut).sort((a,b) => a.doneDate < b.doneDate ? 1 : -1);
     const late = open.filter(t => effDue(t) && effDue(t) < td).length;
-    h += `<div class="sec"><div class="sec-h"><h2>👤 ${esc(p)}</h2><span class="n">${open.length} open${late ? `, <span style="color:var(--danger)">${late} overdue</span>` : ''}${done.length ? `, ${done.length} done in the last 2 weeks` : ''}</span></div><div class="card">`;
+    h += `<div class="sec"><div class="sec-h"><h2>👤 ${esc(p)}</h2><span class="n">${open.length} open${late ? `, <span style="color:var(--danger)">${late} overdue</span>` : ''}${done.length ? `, ${done.length} done in the last 2 weeks` : ''}</span><span class="spacer"></span><button class="q" data-act="copy-person" data-p="${esc(p)}" title="Copy what's open and recently done as text, for a meeting or an email">Copy summary</button></div><div class="card">`;
     h += open.length ? open.map(t => taskRowOnly(t, 'people')).join('') : `<div class="empty">Nothing open.</div>`;
     if (done.length) h += `<div class="grp"><div class="grp-h">Done recently<span class="n">${done.length}</span></div>${done.map(t => taskRowOnly(t, 'people')).join('')}</div>`;
     h += `<input class="ms-qadd" id="padd-${i}" data-padd="${esc(p)}" placeholder="Add a task for ${esc(p)}" enterkeyhint="enter" autocomplete="off"></div></div>`;
@@ -1736,6 +1856,7 @@ function renderPicker(D){
     if (t.status === 'doing'){ score = Math.max(score, 75); why.push({ k:'', txt:'in progress' }); }
     if (effWeek(t) === W0){ score = Math.max(score, 70); why.push({ k:'', txt:'this week’s list' }); }
     if (taskFocus(t)){ score = score ? score + 12 : 50; why.unshift({ k:'focus', txt:'★ priority' }); }
+    if (t.star){ score = score ? score + 10 : 60; why.unshift({ k:'imp', txt:'! important' }); }
     if (nextUp.has(t.id)){ score = Math.max(score, 45); why.push({ k:'', txt:'next in ⚑ ' + currentMs(projById(t.project)).name }); }
     return { score, why };
   };
@@ -1784,6 +1905,7 @@ function renderPicker(D){
 
 function kcard(t, showProj){
   const meta = [];
+  if (t.star && isOpen(t)) meta.push(`<span class="chip imp">! important</span>`);
   if (whoOf(t)) meta.push(`<span class="chip who">👤 ${esc(whoOf(t))}</span>`);
   if (showProj) meta.push(projChip(t));
   if (t.status === 'doing') meta.push(`<span class="chip doing">Doing</span>`);
@@ -1797,6 +1919,8 @@ function kcard(t, showProj){
     const sToday = stepsOf(t).filter(c => !c.done && sDay(c) === today()).length;
     if (sToday && d !== today()) meta.push(`<span class="chip mono" style="color:var(--accent)">${sToday} step${sToday>1?'s':''} today</span>`);
   }
+  if (t.est && isOpen(t)) meta.push(`<span class="chip mono">≈ ${fmtDur(t.est)}</span>`);
+  if (t.repeat && REPEAT_SHORT[t.repeat]) meta.push(`<span class="chip mono rep">⟳ ${REPEAT_SHORT[t.repeat]}</span>`);
   if (showProj){ const m = msById(t); if (m) meta.push(`<span class="chip ms-chip">⚑ ${esc(m.name)}</span>`); }
   const st = stepsOf(t), sd = st.filter(c => c.done).length;
   return `<div class="kcard s-${t.status}" draggable="true" data-drag="${t.id}">
@@ -1913,8 +2037,10 @@ function deadlineSettings(){
         <div class="fld" style="font-size:12px;color:var(--muted);align-self:end">Unfinished tasks move to the new week when it starts.</div>
         <label class="fld"><span class="lbl">Start showing deadlines (days before)</span><input type="number" inputmode="numeric" min="0" max="365" step="1" list="lead-presets" data-set="leadDays" value="${defLead()}"></label>
         <label class="fld"><span class="lbl">Follow up on waiting tasks after (days)</span><input type="number" inputmode="numeric" min="1" max="60" data-set="pingDays" value="${pingDays()}"></label>
+        <label class="fld"><span class="lbl">Hours of work you can plan in a day</span><input type="number" inputmode="decimal" min="1" max="16" step="0.5" data-set="dayHours" value="${+M.meta.dayHours || 6}"></label>
         <label class="fld"><span class="lbl">Calendar alert time</span><input type="time" data-set="calTime" value="${esc(M.meta.calTime || '09:00')}"></label>
       </div>
+      <div class="set-row"><label class="ck"><input type="checkbox" data-set="autoOverdue" ${M.meta.autoOverdue ? 'checked' : ''}> Put overdue tasks (and ones due today) on this week’s list automatically</label></div>
       <div class="lbl" style="margin-top:12px">Calendar alerts</div>
       <div class="set-row">${ck('start','When it starts showing')}${ck('week','1 week before')}${ck('day','1 day before')}${ck('on','On the day')}</div>
       <div class="set-row">${ck('pings','Follow-up (ping) dates for waiting tasks')}</div>
@@ -1987,7 +2113,7 @@ function renderAdd(){
     <textarea id="cap-text" placeholder="Add a task" autocomplete="off" autocapitalize="sentences"></textarea>
     <div class="prev" id="cap-prev"></div>
     <div class="row"><button class="btn pri" data-act="cap-add">Add</button>${ready ? '' : `<span class="sub" style="margin:0">Connecting…</span>`}<span class="spacer" style="flex:1"></span><button class="q" data-act="qa-tips">${UI.qaTips ? 'Hide tips' : 'Tips'}</button></div>
-    ${UI.qaTips ? `<div class="hint">One task per line; they go on today’s list. Add <code>tomorrow</code>, <code>fri</code>, <code>nov 20</code>, <code>by dec 15</code> (deadline), <code>2-4pm</code>, <code>#project</code>, <code>@name</code> or <code>waiting on Sam</code>.</div>` : ''}
+    ${UI.qaTips ? `<div class="hint">One task per line; they go on today’s list. Add <code>tomorrow</code>, <code>fri</code>, <code>nov 20</code>, <code>by dec 15</code> (deadline), <code>2-4pm</code>, <code>#project</code>, <code>@name</code> or <code>waiting on Sam</code>. Also <code>~2h</code> (time needed), <code>!</code> (important), <code>every week</code>, <code>every fri</code> or <code>every month</code> (repeats).</div>` : ''}
     ${recent.length ? `<div class="sec"><div class="sec-h"><h2>Just added</h2><span class="n">${recent.length}</span></div><div class="card">${recent.map(t => taskRow(t,'add')).join('')}</div></div>` : ''}
   </div>`;
 }
@@ -2055,13 +2181,15 @@ function renderLog(){
   all.forEach(t => { if (t.doneDate) keys.add(weekOf(t.doneDate)); stepsOf(t).forEach(c => { if (c.doneDate) keys.add(weekOf(c.doneDate)); }); });
   M.weeks.forEach(w => { if (w.note && w.kind === 'week') keys.add(normW(w.id.slice(2))); });
   const sorted = [...keys].filter(k => k <= curWeek()).sort().reverse();
-  let h = `<div class="head"><h1>Weekly log</h1><span class="spacer"></span><button class="btn" data-act="backup">Back up everything (.json)</button></div><div class="sub">A record of what got done each week. Open a week to see its full plan.</div>`;
+  const rg = UI.logRange || 'month';
+  let h = `<div class="head"><h1>Weekly log</h1><span class="spacer"></span><button class="btn" data-act="backup">Back up everything (.json)</button></div><div class="sub">A record of what got done each week. Open a week to see its full plan.</div>
+    <div class="log-tools"><span class="lbl" style="margin:0">Finished work for</span><select id="log-range" aria-label="Period">${[['month','This month'],['lastmonth','Last month'],['3m','Last 3 months'],['year','This year'],['all','Everything']].map(([k, l]) => `<option value="${k}" ${rg === k ? 'selected' : ''}>${l}</option>`).join('')}</select><button class="btn" data-act="log-copy">Copy as text</button><button class="btn" data-act="log-dl">Download (.md)</button></div>`;
   for (const k of sorted){
     const done = all.filter(t => t.status === 'done' && t.doneDate && weekOf(t.doneDate) === k);
     const sdone = allSteps().filter(({c}) => c.done && c.doneDate && weekOf(c.doneDate) === k);
     const note = weekNote(k)?.note || '';
     const counts = groupByCat(done).map(g => `<span class="chip proj"><i style="background:${g.cat.color}"></i>${esc(g.cat.name)} ${g.items.length}</span>`).join(' ');
-    h += `<div class="card wk"><div class="wk-h" data-act="goto-week" data-w="${k}"><b>${weekLabel(k)}</b>${k===curWeek()?'<span class="chip">this week</span>':''}<span class="spacer"></span>${counts}<span class="chip mono">${done.length} done</span></div>
+    h += `<div class="card wk"><div class="wk-h" data-act="goto-week" data-w="${k}"><b>${weekLabel(k)}</b>${k===curWeek()?'<span class="chip">this week</span>':''}<span class="spacer"></span>${counts}<span class="chip mono">${done.length} done</span>${done.length || sdone.length ? `<button class="q" data-act="log-week-copy" data-w="${k}" title="Copy this week's finished work as text">Copy</button>` : ''}</div>
       ${note ? `<div class="wk-note">${esc(note.length > 400 ? note.slice(0,400) + '…' : note)}</div>` : ''}
       ${done.length || sdone.length ? `<div class="acc">${accList(done, sdone)}</div>` : `<div class="empty" style="padding:12px">Nothing marked done yet.</div>`}</div>`;
   }
@@ -2187,6 +2315,125 @@ function renderProj(){
   return h;
 }
 
+/* ============ Search ============ */
+function hl(s, words){ if (!words.length) return esc(s); const re = new RegExp('(' + words.map(escRe).join('|') + ')', 'gi'); return String(s).split(re).map((p, i) => i % 2 ? '<mark>' + esc(p) + '</mark>' : esc(p)).join(''); }
+function renderSearch(){
+  const raw = UI.searchQ || '', words = raw.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  let h = `<div class="head"><h1>Search</h1></div><input class="srch-in" id="search-q" type="search" placeholder="Search tasks, steps, notes, projects, goals, people" value="${esc(raw)}" autocomplete="off" enterkeyhint="search" aria-label="Search">`;
+  if (!words.length) return h + `<div class="hint" style="margin-top:0">Searches every task, including finished ones and those in archived projects. Press <code>/</code> anywhere to jump here.</div>`;
+  const hay = t => [t.title, t.notes, projLabel(t), taskCat(t)?.name, msById(t)?.name, whoOf(t), t.waitingOn, ...stepsOf(t).map(c => c.text)].filter(Boolean).join('\n').toLowerCase();
+  const hits = tasks().filter(t => { const x = hay(t); return words.every(w => x.includes(w)); });
+  const snip = t => {
+    const tl = t.title.toLowerCase(); if (words.every(w => tl.includes(w))) return '';
+    for (const [lbl, text] of [...stepsOf(t).map(c => ['Step', c.text]), ['Notes', t.notes]]){
+      if (!text) continue; const low = text.toLowerCase(), i = Math.min(...words.map(w => low.indexOf(w)).filter(n => n >= 0));
+      if (!Number.isFinite(i)) continue;
+      const a = Math.max(0, i - 40), piece = (a ? '…' : '') + text.slice(a, i + 100).replace(/\s+/g, ' ');
+      return `<div class="srch-snip"><b>${lbl}:</b> ${hl(piece, words)}</div>`;
+    }
+    return '';
+  };
+  const row = t => taskRowOnly(t, 'search').replace(esc(t.title) + '</div>', () => hl(t.title, words) + '</div>' + snip(t));
+  const open = sortTasks(hits.filter(notDone)), done = hits.filter(t => !notDone(t)).sort((a, b) => (b.doneDate || '') < (a.doneDate || '') ? -1 : 1);
+  if (!hits.length) return h + `<div class="card"><div class="empty">Nothing matches “${esc(raw.trim())}”.</div></div>`;
+  const cap = 80;
+  if (open.length) h += `<div class="sec" style="margin-top:0"><div class="sec-h"><h2>Open</h2><span class="n">${open.length}</span></div><div class="card">${open.slice(0, cap).map(row).join('')}${open.length > cap ? `<div class="empty">and ${open.length - cap} more; add another word to narrow it down</div>` : ''}</div></div>`;
+  if (done.length) h += `<div class="sec"><div class="sec-h"><h2>Done</h2><span class="n">${done.length}</span></div><div class="card">${done.slice(0, cap).map(row).join('')}${done.length > cap ? `<div class="empty">and ${done.length - cap} more</div>` : ''}</div></div>`;
+  return h;
+}
+
+/* ============ Copying text (summaries, reports) ============ */
+async function copyText(text, what){
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch(e){
+    try { const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove(); } catch(e2){}
+  }
+  if (ok) showNote('Copied ' + what + '. Paste it into an email, a message or your notes.');
+  else { downloadFile('summary.txt', text, 'text/plain'); showNote('Couldn’t copy here, so it was downloaded as a text file instead.'); }
+}
+function personSummary(p){
+  const td = today(), cut = addDays(td, -14), low = p.toLowerCase();
+  const ts = tasks().filter(t => whoOf(t).toLowerCase() === low);
+  const open = sortTasks(ts.filter(isOpen));
+  const done = ts.filter(t => t.status === 'done' && (t.doneDate || '') >= cut).sort((a, b) => a.doneDate < b.doneDate ? -1 : 1);
+  const where = t => { const pr = projById(t.project), m = msById(t); return pr ? ' (' + pr.name + (m ? ', ' + m.name : '') + ')' : ''; };
+  const line = t => '- ' + t.title + where(t) + (effDue(t) && t.status !== 'done' ? ', due ' + short(effDue(t)) : '') +
+    (t.status === 'doing' ? ' [in progress]' : t.status === 'waiting' ? ' [waiting' + (t.waitingOn ? ' on ' + t.waitingOn : '') + ']' : '') +
+    (t.status === 'done' ? ', done ' + short(t.doneDate) : '') +
+    stepsOf(t).filter(c => !c.done && t.status !== 'done').map(c => '\n    - ' + c.text).join('');
+  const late = open.filter(t => effDue(t) && effDue(t) < td);
+  const dated = open.filter(t => effDue(t) && effDue(t) >= td).sort((a, b) => effDue(a) < effDue(b) ? -1 : 1);
+  const rest = open.filter(t => !effDue(t));
+  const goals = allGoals().filter(({m}) => !m.done && (m.who || '').toLowerCase() === low);
+  let s = p + ': where things stand, ' + parse(td).toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }) + '\n';
+  if (goals.length) s += '\nGoals\n' + goals.map(({p: pr, m}) => { const st = msStats(pr, m); return '- ' + m.name + ' (' + pr.name + ')' + (m.due ? ', due ' + short(m.due) : '') + ', ' + st.done + ' of ' + st.total + ' tasks done'; }).join('\n') + '\n';
+  if (late.length) s += '\nOverdue\n' + late.map(line).join('\n') + '\n';
+  if (dated.length) s += '\nComing up\n' + dated.map(line).join('\n') + '\n';
+  if (rest.length) s += '\n' + (late.length || dated.length ? 'Also open' : 'Open') + '\n' + rest.map(line).join('\n') + '\n';
+  if (!open.length) s += '\nNothing open right now.\n';
+  if (done.length) s += '\nDone in the last 2 weeks\n' + done.map(line).join('\n') + '\n';
+  return s;
+}
+
+/* ============ Done log: what got finished, for reports ============ */
+function logRange(){
+  const td = today(), y = td.slice(0, 4), mo = td.slice(0, 7), r = UI.logRange || 'month';
+  if (r === 'lastmonth'){ const first = mo + '-01', prevFirst = addMonthsClamp(first, -1); return { from: prevFirst, to: addDays(first, -1), label: parse(prevFirst).toLocaleDateString('en-US', { month:'long', year:'numeric' }) }; }
+  if (r === '3m') return { from: addMonthsClamp(td, -3), to: td, label: 'The last 3 months' };
+  if (r === 'year') return { from: y + '-01-01', to: td, label: y + ' so far' };
+  if (r === 'all') return { from: '0000-01-01', to: td, label: 'Everything' };
+  return { from: mo + '-01', to: td, label: parse(td).toLocaleDateString('en-US', { month:'long', year:'numeric' }) + ' so far' };
+}
+function doneReport(from, to, label){
+  const inR = d => d && d >= from && d <= to;
+  const done = tasks().filter(t => t.status === 'done' && inR(t.doneDate)).sort((a, b) => a.doneDate < b.doneDate ? -1 : 1);
+  const steps = allSteps().filter(({t, c}) => c.done && inR(c.doneDate) && !done.includes(t));
+  let md = '# Finished work: ' + label + '\n\n' + (from > '0000-01-01' ? short(from) + ', ' + from.slice(0, 4) + ' to ' : 'Up to ') + short(to) + ', ' + to.slice(0, 4) + '. ' + done.length + ' task' + (done.length === 1 ? '' : 's') + (steps.length ? ' and ' + steps.length + ' step' + (steps.length === 1 ? '' : 's') : '') + '.\n';
+  if (!done.length && !steps.length) return md + '\nNothing marked done in this period.\n';
+  const stepTasks = steps.map(x => x.t);
+  for (const g of groupByCat([...new Set([...done, ...stepTasks])])){
+    md += '\n## ' + g.cat.name + '\n';
+    const byP = new Map();
+    for (const t of g.items){ const k = projById(t.project)?.name || ''; if (!byP.has(k)) byP.set(k, []); byP.get(k).push(t); }
+    for (const [pn, ts] of [...byP].sort((a, b) => !a[0] ? 1 : !b[0] ? -1 : a[0].localeCompare(b[0]))){
+      md += '\n### ' + (pn || 'No project') + '\n';
+      for (const t of ts){
+        const who = whoOf(t) ? ' [' + whoOf(t) + ']' : '';
+        if (done.includes(t)) md += '- ' + t.title + who + ' (' + short(t.doneDate) + ')' + '\n';
+        for (const {c} of steps.filter(x => x.t === t)) md += '- ' + c.text + ', a step of “' + t.title + '”' + who + ' (' + short(c.doneDate) + ')\n';
+      }
+    }
+  }
+  return md;
+}
+
+/* ============ Week review ============ */
+function reviewSec(W){
+  const td = today();
+  const doneT = tasks().filter(t => mine(t) && t.status === 'done' && t.doneDate && weekOf(t.doneDate) === W);
+  const doneS = allSteps().filter(({t, c}) => mine(t) && c.done && c.doneDate && weekOf(c.doneDate) === W);
+  const u = unfinishedThisWeek(), slipped = u.tasks.filter(t => !parked(t)), waiting = u.tasks.filter(parked);
+  const late = sortTasks(tasks().filter(t => mine(t) && isOpen(t) && effDue(t) && effDue(t) < td && !slipped.includes(t)));
+  const risk = allGoals().filter(({m}) => !m.done && m.due && dayDiff(td, m.due) <= 14).map(({p, m}) => ({ p, m, st: msStats(p, m) })).filter(x => x.st.done < x.st.total || x.m.due < td).sort((a, b) => a.m.due < b.m.due ? -1 : 1);
+  const est = slipped.reduce((n, t) => n + (t.est || 0), 0);
+  let h = `<div class="sec"><div class="sec-h"><h2>Week review</h2><span class="spacer"></span><button class="q" data-act="review">Close</button></div><div class="card review">
+    <div class="rv-stats">
+      <div class="rv-stat"><b>${doneT.length}</b>tasks done${doneS.length ? ', plus ' + doneS.length + ' step' + (doneS.length === 1 ? '' : 's') : ''}</div>
+      <div class="rv-stat ${slipped.length ? 'bad' : ''}"><b>${slipped.length + u.steps.length}</b>still open from this week</div>
+      <div class="rv-stat ${late.length ? 'bad' : ''}"><b>${late.length}</b>other overdue</div>
+      <div class="rv-stat ${risk.length ? 'bad' : ''}"><b>${risk.length}</b>goals due within 2 weeks</div>
+    </div>`;
+  if (slipped.length || u.steps.length) h += `<h3>Didn’t get to${est ? ` <span style="text-transform:none">· ≈ ${fmtDur(est)} of work</span>` : ''}</h3><div class="rv-list">${sortTasks(slipped).map(t => taskRowOnly(t, 'due')).join('')}${u.steps.map(({t, c}) => stepRow(t, c, true, 'week')).join('')}</div>`;
+  if (waiting.length) h += `<h3>Your part done, waiting on others</h3><div class="rv-list">${waiting.map(t => taskRowOnly(t, 'due')).join('')}</div>`;
+  if (late.length) h += `<h3>Overdue, not on this week’s list</h3><div class="rv-list">${late.map(t => taskRowOnly(t, 'due')).join('')}</div>`;
+  if (risk.length) h += `<h3>Goals coming due</h3>` + risk.map(({p, m, st}) => { const n = dayDiff(td, m.due), left = st.total - st.done; return `<div class="rv-row"><span data-act="nav" data-v="proj" data-id="${p.id}" style="cursor:pointer">⚑ <b>${esc(m.name)}</b></span>${projChip({ project: p.id })}${m.who ? `<span class="chip who">👤 ${esc(m.who)}</span>` : ''}<span class="chip mono ${n < 0 ? 'late' : n <= 7 ? 'soon' : ''}">due ${rel(m.due)} · ${dueIn(m.due)}</span><span class="chip mono">${st.done}/${st.total} done${left ? ', ' + left + ' open' : ''}</span></div>`; }).join('');
+  const f = focusOf(W);
+  if (f.length) h += `<h3>★ This week’s priorities</h3>` + f.map(k => { const { p, m } = focusParts(k), all = tasks().filter(t => t.project === p.id && (!m || t.milestone === m.id)); const dw = all.filter(t => t.status === 'done' && t.doneDate && weekOf(t.doneDate) === W).length, op = all.filter(isOpen).length; return `<div class="rv-row"><b>${m ? '⚑ ' : ''}${esc(focusLabel(k))}</b><span class="chip mono">${dw} done this week</span><span class="chip mono">${op} still open</span></div>`; }).join('');
+  h += `<div class="rv-acts">${slipped.length || u.steps.length ? `<button class="btn ${UI.armed === 'wk-move' ? 'pri' : ''}" data-act="wk-move">${UI.armed === 'wk-move' ? 'Move ' + (u.tasks.length + u.steps.length) + ' to next week?' : 'Move unfinished to next week'}</button>` : ''}<button class="btn pri" data-act="review-next">Plan next week ›</button></div>
+    <div class="hint" style="margin-top:10px">Unfinished tasks move to next week by themselves when it starts. Moving them now lets you see next week’s full list while you plan it. Week notes at the bottom of this page are a good place for how the week went.</div></div></div>`;
+  return h;
+}
+
 /* ============ Drawer ============ */
 function renderDrawer(){
   const dr = document.getElementById('drawer');
@@ -2205,6 +2452,7 @@ function renderDrawer(){
       <div><span class="lbl">Status</span><div class="seg">${S.map(([k,l,c]) => `<button class="${t.status===k?'on '+c:''}" data-act="status" data-s="${k}" data-id="${t.id}">${l}</button>`).join('')}</div>
         ${(() => { const l = t.statusLog || []; if (!l.length) return ''; const cur = statusSince(t);
           return `<div class="st-hist">${cur ? `${STATUS_NAME[t.status]} since ${cur.d === today() ? 'today' : short(cur.d)}${cur.from ? ` (was ${STATUS_NAME[cur.from] || cur.from})` : ''}` : ''}${l.length > 1 ? `<details><summary>History</summary>${l.slice().reverse().map(x => `<div>${short(x.d)}: ${x.from ? esc(STATUS_NAME[x.from] || x.from) + ' → ' : ''}${esc(STATUS_NAME[x.to] || x.to)}</div>`).join('')}</details>` : ''}</div>`; })()}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="q ${t.star ? 'imp-on' : ''}" data-act="star" data-id="${t.id}" title="Important tasks come first in lists and in Suggested">${t.star ? '! Important' : 'Mark important'}</button></div>
       ${t.status === 'waiting' ? `<div class="wbox">
         <div class="grid2">
           <label class="fld"><span class="lbl">Waiting on</span><input id="d-who" value="${esc(t.waitingOn)}" placeholder="Name" data-field="waitingOn"></label>
@@ -2230,6 +2478,9 @@ function renderDrawer(){
           <option value="${curWeek()}" ${effWeek(t)===curWeek()?'selected':''}>This week</option>
           <option value="${addDays(curWeek(),7)}" ${effWeek(t)===addDays(curWeek(),7)?'selected':''}>Next week</option>
         </select></label>
+        <label class="fld"><span class="lbl">Time needed</span><input id="d-est" list="est-presets" value="${t.est ? fmtDur(t.est) : ''}" placeholder="e.g. 30m, 2h" data-field="est" autocomplete="off"><datalist id="est-presets">${['15m','30m','45m','1h','1h 30m','2h','3h','4h','6h'].map(x => `<option value="${x}">`).join('')}</datalist></label>
+        <label class="fld"><span class="lbl">Repeat</span><select id="d-repeat" data-field="repeat"><option value="">Doesn’t repeat</option>${REPEATS.map(([k, l]) => `<option value="${k}" ${t.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        ${t.repeat && REPEAT_SHORT[t.repeat] ? `<div class="fld" style="grid-column:1/-1;font-size:12px;color:var(--muted)">${t.status === 'done' ? (t.spawned && M.tasks.has(t.spawned) ? 'The next one has been added.' : '') : (() => { const nx = repNext(t); return 'When you finish this, the next one is added' + (nx.day ? ' for ' + short(nx.day) : '') + (nx.due ? (nx.day ? ', due ' : ', due ') + short(nx.due) : '') + '.'; })()}</div>` : ''}
       </div>
       <div><span class="lbl">Checklist</span>
         ${(t.checklist||[]).map((c,i) => `<div class="cl-item ${c.done?'done':''}">
@@ -2245,6 +2496,54 @@ function renderDrawer(){
         <button class="btn warn ${UI.armed===armKey?'armed':''}" data-act="del-task" data-id="${t.id}">${UI.armed===armKey?'Confirm delete':'Delete task'}</button>
       </div>
     </div>`;
+}
+
+/* ============ Undo: a few seconds to take back a finish, delete or move ============ */
+let UNDO = null;
+function undoStart(ids, withMeta){ const m = new Map(ids.map(id => [id, M.tasks.get(id) ? clone(M.tasks.get(id)) : null])); if (withMeta && M.meta) m.set('__meta', clone(M.meta)); return m; }
+const sameRec = (a, b) => { const x = a ? { ...a } : null, y = b ? { ...b } : null; if (x) delete x._u; if (y) delete y._u; return JSON.stringify(x) === JSON.stringify(y); };
+function offerUndo(msg, before){
+  const changed = [...before].some(([id, old]) => id === '__meta' ? !sameRec(old, M.meta) : !sameRec(old, M.tasks.get(id) || null));
+  if (!changed) return;
+  clearTimeout(UNDO?.timer);
+  UNDO = { msg, before, timer: setTimeout(() => { UNDO = null; drawUndo(); }, 7000) };
+  drawUndo();
+}
+function doUndo(){
+  if (!UNDO) return;
+  const u = UNDO; clearTimeout(u.timer); UNDO = null;
+  for (const [id, old] of u.before){
+    if (id === '__meta'){ M.meta = old; saveMeta(); continue; }
+    if (old){ delete M.deleted[id]; saveTask(clone(old)); }
+    else if (M.tasks.has(id)) removeTask(id);
+  }
+  drawUndo(); showNote('Undone.'); render();
+}
+function drawUndo(){
+  let bar = document.getElementById('undo-bar');
+  if (!UNDO){ bar?.remove(); return; }
+  if (!bar){ bar = document.createElement('div'); bar.id = 'undo-bar'; bar.setAttribute('role', 'status'); document.body.appendChild(bar); }
+  bar.style.bottom = document.getElementById('update-bar') ? 'calc(70px + env(safe-area-inset-bottom,0px))' : '';
+  bar.innerHTML = `<span>${esc(UNDO.msg)}</span><button data-act="undo">Undo</button>`;
+}
+function whereNow(t){
+  const d = effDay(t);
+  if (t.status === 'done') return 'done';
+  if (d) return d === today() ? 'today' : rel(d);
+  const w = effWeek(t); if (w) return w === curWeek() ? 'this week' : 'the week of ' + short(w);
+  return 'no date';
+}
+function setStatusUndo(t, s){
+  const before = undoStart([t.id]), prev = t.spawned, was = t.status;
+  setStatus(t, s);
+  let msg = s === 'done' ? 'Marked “' + t.title + '” done' : was === 'done' ? 'Marked “' + t.title + '” not done' : '“' + t.title + '”: ' + STATUS_NAME[s];
+  if (t.spawned && t.spawned !== prev){ before.set(t.spawned, null); const n = M.tasks.get(t.spawned), d = n && (n.day || n.due); if (d) msg += '. Next one: ' + (d === today() ? 'today' : rel(d)); }
+  offerUndo(msg, before);
+}
+function moveUndo(id, fn){
+  const t0 = M.tasks.get(id); if (!t0){ fn(); return; }
+  const before = undoStart([id]); fn();
+  const t = M.tasks.get(id); if (t) offerUndo('Moved “' + t.title + '” to ' + whereNow(t), before);
 }
 
 /* ============ Notes banner ============ */
@@ -2265,6 +2564,7 @@ document.addEventListener('click', e => {
       UI.view = el.dataset.v; UI.showDone = false; UI.open = null;
       try { if (HASH_VIEWS.includes(UI.view)) { if (location.hash !== '#' + UI.view) location.hash = UI.view; } else if (location.hash) location.hash = ''; } catch(e){}
       if (UI.view === 'add') focusCap();
+      if (UI.view === 'search') setTimeout(() => document.getElementById('search-q')?.focus(), 40);
       if (UI.view === 'cat') UI.cat = id;
       if (UI.view === 'proj') UI.proj = id;
       if (UI.view === 'week') UI.week = curWeek();
@@ -2288,8 +2588,16 @@ document.addEventListener('click', e => {
     case 'gh-off': if (UI.armed === 'gh-off'){ lsSet(LS_GH, ''); try { localStorage.removeItem(LS_GH); } catch(e){} UI.armed = null; SYNC.state = 'idle'; } else { UI.armed = 'gh-off'; } break;
     case 'bd-mode': UI.boardMode = el.dataset.m; lsSet('lt_boardmode', UI.boardMode); break;
     case 'bd-cat': UI.boardCat = id || ''; break;
-    case 'pick': planDay(id, UI.day); return;
-    case 'unplan': { const t = M.tasks.get(id); if (t && blockLen(t) > 1 && UI.day < blockEnd(t)){ t.day = addDays(UI.day, 1); if (t.day >= t.dayTo) t.dayTo = ''; saveTask(t); break; } if (t){ t.dayTo = ''; t.day = ''; t.time = ''; if (!t.week || normW(t.week) < curWeek()) t.week = weekOf(UI.day); if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week); saveTask(t); } break; }
+    case 'pick': moveUndo(id, () => planDay(id, UI.day)); return;
+    case 'undo': doUndo(); return;
+    case 'star': { const t = M.tasks.get(id); if (t){ t.star = !t.star; saveTask(t); } break; }
+    case 'copy-person': copyText(personSummary(el.dataset.p), el.dataset.p + '’s summary'); return;
+    case 'review': UI.review = !UI.review; break;
+    case 'review-next': UI.review = false; UI.week = addDays(curWeek(), 7); document.getElementById('scroll').scrollTop = 0; break;
+    case 'log-copy': { const r = logRange(); copyText(doneReport(r.from, r.to, r.label), 'the list of finished work'); return; }
+    case 'log-dl': { const r = logRange(); downloadFile('finished-' + (r.from > '0000-01-01' ? r.from + '-to-' : 'to-') + r.to + '.md', doneReport(r.from, r.to, r.label), 'text/markdown'); return; }
+    case 'log-week-copy': { const W = el.dataset.w; copyText(doneReport(W, addDays(W, 6), 'Week of ' + weekLabel(W)), 'that week'); return; }
+    case 'unplan': moveUndo(id, () => { const t = M.tasks.get(id); if (t && blockLen(t) > 1 && UI.day < blockEnd(t)){ t.day = addDays(UI.day, 1); if (t.day >= t.dayTo) t.dayTo = ''; saveTask(t); return; } if (t){ t.dayTo = ''; t.day = ''; t.time = ''; if (!t.week || normW(t.week) < curWeek()) t.week = weekOf(UI.day); if (!hasWeek(t, normW(t.week))) t.weeks.push(t.week); saveTask(t); } }); break;
     case 'pick-toggle': UI.openPick.has(id) ? UI.openPick.delete(id) : UI.openPick.add(id); break;
     case 'day-prev': UI.day = addDays(UI.day, -1); break;
     case 'day-next': UI.day = addDays(UI.day, 1); break;
@@ -2299,10 +2607,10 @@ document.addEventListener('click', e => {
     case 'open': UI.open = id; break;
     case 'close': UI.open = null; break;
     case 'done': toggleDone(id); return;
-    case 'today': quickToday(id); return;
-    case 'week': quickWeek(id); return;
+    case 'today': moveUndo(id, () => quickToday(id)); return;
+    case 'week': moveUndo(id, () => quickWeek(id)); return;
     case 'pinged': markPinged(id); return;
-    case 'status': { const t = M.tasks.get(id); if (t){ setStatus(t, el.dataset.s); } break; }
+    case 'status': { const t = M.tasks.get(id); if (t){ setStatusUndo(t, el.dataset.s); } break; }
     case 'wk-prev': UI.week = addDays(UI.week, -7); break;
     case 'wk-next': UI.week = addDays(UI.week, 7); break;
     case 'wk-now': UI.week = curWeek(); break;
@@ -2317,7 +2625,7 @@ document.addEventListener('click', e => {
     case 'proj-unarchive': { const p = projById(id); if (p){ p.archived = false; p.archivedAt = ''; saveMeta(); showNote('“' + p.name + '” is back in your lists.'); } break; }
     case 'ms-checked': { const m = msList(projById(el.dataset.p)).find(x => x.id === id); if (m){ m.remind = ''; saveMeta(); showNote('Check-in for “' + m.name + '” cleared.'); } break; }
     case 'wk-move':
-      if (UI.armed === 'wk-move'){ UI.armed = null; const n = moveUnfinishedToNextWeek(); showNote('Moved ' + n + ' unfinished item' + (n === 1 ? '' : 's') + ' to next week.'); }
+      if (UI.armed === 'wk-move'){ UI.armed = null; const u = unfinishedThisWeek(), before = undoStart([...new Set([...u.tasks.map(t => t.id), ...u.steps.map(x => x.t.id)])]); const n = moveUnfinishedToNextWeek(); offerUndo('Moved ' + n + ' unfinished item' + (n === 1 ? '' : 's') + ' to next week', before); }
       else UI.armed = 'wk-move';
       break;
     case 'goto-week': UI.view = 'week'; UI.week = el.dataset.w; document.getElementById('scroll').scrollTop = 0; break;
@@ -2344,7 +2652,7 @@ document.addEventListener('click', e => {
       saveTask(x.t); break; }
     case 'add-step': UI.open = id; render(); setTimeout(() => document.getElementById('d-cl-new')?.focus(), 60); return;
     case 'cl-del': { const t = M.tasks.get(UI.open); if (t){ t.checklist.splice(+el.dataset.i,1); saveTask(t); } break; }
-    case 'del-task': if (UI.armed === 'task:'+id){ removeTask(id); UI.open = null; UI.armed = null; } else UI.armed = 'task:'+id; break;
+    case 'del-task': if (UI.armed === 'task:'+id){ const before = undoStart([id]), nm = M.tasks.get(id)?.title || ''; removeTask(id); UI.open = null; UI.armed = null; offerUndo('Deleted “' + nm + '”', before); } else UI.armed = 'task:'+id; break;
     case 'ms-add': msAdd(); return;
     case 'ms-up': case 'ms-down': {
       const p = projById(UI.proj); const a = msList(p); const i = a.findIndex(m => m.id === id); const j = act === 'ms-up' ? i - 1 : i + 1;
@@ -2365,14 +2673,18 @@ document.addEventListener('click', e => {
       break;
     case 'del-proj':
       if (UI.armed === 'proj:'+id){
+        const before = undoStart(tasks().filter(t => t.project === id).map(t => t.id), true), nm = projById(id)?.name || '';
         tasks().filter(t => t.project === id).forEach(t => removeTask(t.id));
+        setTimeout(() => offerUndo('Deleted the project “' + nm + '”', before), 0);
         M.meta.projects = projs().filter(p => p.id !== id); saveMeta();
         UI.armed = null; UI.view = 'week';
       } else UI.armed = 'proj:'+id;
       break;
     case 'del-cat':
       if (UI.armed === 'cat:'+id){
+        const before = undoStart(tasks().filter(t => taskCat(t)?.id === id).map(t => t.id), true), nm = catById(id)?.name || '';
         tasks().filter(t => taskCat(t)?.id === id).forEach(t => removeTask(t.id));
+        setTimeout(() => offerUndo('Deleted the category “' + nm + '”', before), 0);
         M.meta.projects = projs().filter(p => p.cat !== id);
         M.meta.categories = cats().filter(c => c.id !== id); saveMeta();
         UI.armed = null; UI.view = 'week';
@@ -2383,6 +2695,9 @@ document.addEventListener('click', e => {
 });
 
 document.addEventListener('keydown', e => {
+  const typing = e.target.closest?.('input,textarea,select,[contenteditable]');
+  if (!typing && UNDO && e.key.toLowerCase() === 'z' && (e.metaKey || e.ctrlKey) && !e.shiftKey){ e.preventDefault(); doUndo(); return; }
+  if (!typing && e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey && M.meta){ e.preventDefault(); UI.view = 'search'; UI.open = null; try { location.hash = 'search'; } catch(err){} render(); setTimeout(() => document.getElementById('search-q')?.focus(), 30); return; }
   if (e.key === 'Escape'){
     if (e.target.dataset?.esc === 'side-cancel'){ UI.adding = null; render(); return; }
     if (e.target.id === 'time-edit'){ UI.editTime = null; render(); return; }
@@ -2421,6 +2736,7 @@ document.addEventListener('change', e => {
   const el = e.target;
   if (el.id === 'time-edit') return;   // saved on Enter or when the box loses focus
   if (el.id === 'focus-add'){ if (el.value) toggleFocus(el.value, el.dataset.w); render(); return; }
+  if (el.id === 'log-range'){ UI.logRange = el.value; return; }
   if (el.id === 'qa-target'){ UI.lastProj = el.value; lsSet('lt_lastproj', el.value); return; }
   if (el.id === 'qa-when'){
     const di = document.getElementById('qa-date');
@@ -2440,6 +2756,8 @@ document.addEventListener('change', e => {
     if (k === 'leadDays') M.meta.leadDays = leadNum(el.value) ?? 1;
     else if (k === 'weekStart'){ M.meta.weekStart = +el.value === 1 ? 1 : 0; UI.week = curWeek(); }
     else if (k === 'calTime') M.meta.calTime = el.value || '09:00';
+    else if (k === 'dayHours') M.meta.dayHours = Math.max(1, Math.min(16, Math.round((+el.value || 6) * 2) / 2));
+    else if (k === 'autoOverdue') M.meta.autoOverdue = el.checked;
     else if (k === 'pingDays') M.meta.pingDays = Math.max(1, Math.min(60, Math.round(+el.value) || 7));
     else M.meta.calAlerts = { ...calAlerts(), [k]: el.checked };
     saveMeta(); render(); return;
@@ -2478,6 +2796,8 @@ document.addEventListener('change', e => {
   if (f === 'title'){ const v = el.value.trim(); if (v && v !== t.title){ t.title = v; saveTask(t); } }
   else if (f === 'target'){ const v = el.value; if (v.startsWith('p:')){ t.project = v.slice(2); t.cat = projById(t.project)?.cat || ''; } else { t.project = ''; t.cat = v.slice(2); } if (!msById(t)) t.milestone = ''; saveTask(t); }
   else if (f === 'milestone'){ t.milestone = el.value; saveTask(t); }
+  else if (f === 'est'){ const n = parseDur(el.value); if (n === null) showNote('Couldn’t read that time. Try 30m, 1h or 1h 30m.'); else if ((t.est || 0) !== Math.min(n, 6000)){ t.est = Math.min(n, 6000); saveTask(t); } }
+  else if (f === 'repeat'){ if ((t.repeat || '') !== el.value){ t.repeat = el.value; saveTask(t); } }
   else if (f === 'dayTo'){ const v = el.value; t.dayTo = v && t.day && v > t.day ? v : ''; saveTask(t); }
   else if (f === 'lead'){ const n = leadNum(el.value); t.lead = n ?? ''; saveTask(t); }
   else if (f === 'day'){ if (el.value) setWhen(t, el.value); else { t.day = ''; } saveTask(t); }
@@ -2522,6 +2842,7 @@ document.addEventListener('input', e => {
     }, 900);
   }
   if (e.target.id === 'pick-q'){ UI.pickQ = e.target.value; requestRender(); }
+  if (e.target.id === 'search-q'){ UI.searchQ = e.target.value; requestRender(); }
   if (e.target.dataset?.msDesc){ e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px'; }
   if (e.target.id === 'qa-text'){
     const pv = document.getElementById('qa-prev');
@@ -2570,7 +2891,7 @@ function dropOn(z, ref, y){
     saveTask(x.t); render(); return;
   }
   const id = ref, t = M.tasks.get(id); if (!t) return;
-  if (z.dataset.dropStatus){ setStatus(t, z.dataset.dropStatus); render(); return; }
+  if (z.dataset.dropStatus){ setStatus(t, z.dataset.dropStatus); render(); return; }   // undo offered by dropUndo
   if (z.dataset.dropKms !== undefined){
     const [pid, mid] = z.dataset.dropKms.split('|');
     if (pid.startsWith('c:')){ t.project = ''; t.cat = pid.slice(2); t.milestone = ''; }
@@ -2582,6 +2903,15 @@ function dropOn(z, ref, y){
   const d = z.dataset.drop;
   if (t.status === 'done' && d !== 'week') return;
   planDay(id, d);
+}
+function dropUndo(z, ref, y){
+  const id = ref.startsWith('step:') ? ref.slice(5).split('|')[0] : ref, t0 = M.tasks.get(id);
+  if (!t0){ dropOn(z, ref, y); return; }
+  const before = undoStart([id]), st = t0.status;
+  dropOn(z, ref, y);
+  const t = M.tasks.get(id); if (!t) return;
+  if (t.spawned && t.spawned !== before.get(id).spawned) before.set(t.spawned, null);
+  offerUndo(t.status !== st ? '“' + t.title + '”: ' + STATUS_NAME[t.status] : ref.startsWith('step:') ? 'Moved a step of “' + t.title + '”' : 'Moved “' + t.title + '” to ' + whereNow(t), before);
 }
 const clearHints = () => document.querySelectorAll('.drop-hint,.ins-before,.ins-after').forEach(x => x.classList.remove('drop-hint','ins-before','ins-after'));
 function markZone(z, y){
@@ -2605,7 +2935,7 @@ document.addEventListener('drop', e => {
   const z = refineZone(e.target.closest?.(DROP_SEL), e.clientY); if (!z) return;
   e.preventDefault(); clearHints();
   const ref = e.dataTransfer.getData('text/plain') || dragNow; dragNow = '';
-  if (ref && canDrop(z, ref)) dropOn(z, ref, e.clientY);
+  if (ref && canDrop(z, ref)) dropUndo(z, ref, e.clientY);
 });
 
 /* Touch: press and hold a task or step, then drag it (phones and tablets) */
@@ -2662,7 +2992,7 @@ document.addEventListener('touchmove', e => {
 }, { passive: false });
 document.addEventListener('touchend', e => {
   if (!TD) return;
-  if (TD.active){ e.preventDefault(); touchDropAt = Date.now(); tdZone(); const z = TD.zone, ref = TD.ref, y = TD.y; tdEnd(); if (z) dropOn(z, ref, y); }
+  if (TD.active){ e.preventDefault(); touchDropAt = Date.now(); tdZone(); const z = TD.zone, ref = TD.ref, y = TD.y; tdEnd(); if (z) dropUndo(z, ref, y); }
   else tdEnd();
 }, { passive: false });
 document.addEventListener('touchcancel', tdEnd);
