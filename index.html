@@ -634,7 +634,7 @@ function dueIn(d){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v30';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v31';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1984,7 +1984,7 @@ function renderWaiting(){
 }
 
 // Weekly priorities: up to two projects ('p:<id>') or goals ('g:<project>|<goal>') per week, saved with the week's notes
-const FOCUS_MAX = 2;
+const FOCUS_MAX = 5;
 const focusOf = W => (weekNote(W || curWeek())?.focus || []).filter(k => focusLabel(k));
 function setFocus(W, list){ const w = weekNote(W) || { kind:'week', id:'w-' + W, note:'' }; w.focus = list; saveWeek(w); }
 function focusParts(k){ if (k.startsWith('p:')) return { p: projById(k.slice(2)) }; const [pid, mid] = k.slice(2).split('|'); const p = projById(pid); return { p, m: msList(p).find(x => x.id === mid) }; }
@@ -1994,13 +1994,13 @@ const taskFocus = t => !!t.project && (isFocus('p:' + t.project) || (!!t.milesto
 function toggleFocus(k, W){
   W = W || curWeek(); let f = focusOf(W);
   if (f.includes(k)) f = f.filter(x => x !== k);
-  else { if (f.length >= FOCUS_MAX){ showNote('You already have two priorities this week. Remove one first.'); return; } f = [...f, k]; }
+  else { if (f.length >= FOCUS_MAX){ showNote('You already have ' + FOCUS_MAX + ' priorities this week. Remove one first.'); return; } f = [...f, k]; }
   setFocus(W, f);
 }
 function focusTasks(k){ const { p, m } = focusParts(k); return sortTasks(tasks().filter(t => isOpen(t) && t.project === p.id && (!m || t.milestone === m.id))); }
 function focusSec(W){
   const f = focusOf(W), isCur = W === curWeek();
-  let h = `<div class="sec o-focus"><div class="sec-h"><h2>★ Priorities</h2><span class="n">${f.length}/${FOCUS_MAX}</span><span class="spacer"></span></div>`;
+  let h = `<div class="sec o-focus"><div class="sec-h"><h2>★ Priorities</h2><span class="n">${f.length}</span><span class="spacer"></span></div>`;
   if (f.length){
     h += `<div class="focus-grid">` + f.map(k => {
       const { p, m } = focusParts(k), all = tasks().filter(t => t.project === p.id && (!m || t.milestone === m.id)), done = all.filter(t => t.status === 'done').length, open = focusTasks(k);
@@ -2016,7 +2016,7 @@ function focusSec(W){
     const opts = [];
     for (const p of projs().filter(p => !p.archived)){ if (!f.includes('p:' + p.id)) opts.push(`<option value="p:${p.id}">${esc(p.name)}</option>`); for (const m of msList(p).filter(m => !m.done)) if (!f.includes('g:' + p.id + '|' + m.id)) opts.push(`<option value="g:${p.id}|${m.id}">&nbsp;&nbsp;⚑ ${esc(m.name)} (${esc(p.name)})</option>`); }
     const last = focusOf(addDays(W, -7)).filter(k => !f.includes(k));
-    h += `<div class="focus-add"><select id="focus-add" data-w="${W}"><option value="">${f.length ? 'Add another priority…' : 'Pick up to two priorities for ' + (isCur ? 'this week' : 'that week') + '…'}</option>${opts.join('')}</select>${!f.length && last.length ? `<button class="btn" data-act="focus-last" data-w="${W}">Same as last week</button>` : ''}</div>`;
+    h += `<div class="focus-add"><select id="focus-add" data-w="${W}"><option value="">${f.length ? 'Add another priority…' : 'Pick your priorities for ' + (isCur ? 'this week' : 'that week') + '…'}</option>${opts.join('')}</select>${!f.length && last.length ? `<button class="btn" data-act="focus-last" data-w="${W}">Same as last week</button>` : ''}</div>`;
   }
   return h + `</div>`;
 }
@@ -2101,7 +2101,7 @@ function renderProj(){
   let h = `<div class="crumb">${esc(c?.name || '')}</div>
     <div class="head"><input class="title-input" id="ren-proj" value="${esc(p.name)}" data-ren="proj" data-id="${p.id}" aria-label="Project name">
     <span class="spacer"></span>
-    ${p.archived ? '' : `<button class="btn ${isFocus('p:' + p.id) ? 'focus-on' : ''}" data-act="focus" data-k="p:${p.id}" title="Highlight as one of this week's two priorities">${isFocus('p:' + p.id) ? '★ Priority this week' : '☆ Priority'}</button>`}
+    ${p.archived ? '' : `<button class="btn ${isFocus('p:' + p.id) ? 'focus-on' : ''}" data-act="focus" data-k="p:${p.id}" title="Highlight as one of this week's priorities">${isFocus('p:' + p.id) ? '★ Priority this week' : '☆ Priority'}</button>`}
     <button class="btn" data-act="${p.archived ? 'proj-unarchive' : 'proj-archive'}" data-id="${p.id}" title="${p.archived ? 'Bring this project back into your lists' : 'Hide this project and its tasks from your lists without deleting anything'}">${p.archived ? 'Unarchive' : 'Archive'}</button>
     <button class="btn warn ${UI.armed===armKey?'armed':''}" data-act="del-proj" data-id="${p.id}">${UI.armed===armKey ? `Delete with ${list.length} tasks?` : 'Delete project'}</button></div>
     ${p.archived ? `<div class="arch-note">Archived${p.archivedAt ? ' on ' + short(p.archivedAt) : ''}. Its tasks are hidden from Today, This week, the board and suggestions. Nothing has been deleted.</div>` : ''}
@@ -2123,7 +2123,7 @@ function renderProj(){
         ${m.done ? '' : `<label class="ms-due" title="Who is doing this goal; its tasks are theirs unless a task says otherwise"><span>Who</span><input id="ms-who-${m.id}" list="ms-people" data-ms-who="${m.id}" value="${esc(m.who || '')}" placeholder="Me" autocomplete="off" style="width:92px" aria-label="Who is doing this goal"></label><label class="ms-due ${m.due && m.due < today() ? 'late' : ''}" title="Deadline for the whole goal; its tasks are due by then at the latest"><span>Due</span><input type="date" id="ms-due-${m.id}" data-ms-due="${m.id}" value="${m.due || ''}" aria-label="Goal deadline"></label>`}
         <span class="ms-prog"><span class="ms-bar"><i style="width:${pct}%"></i></span>${st.done}/${st.total}</span>
         <span class="ms-tools">
-          ${m.done ? '' : `<button class="q ${isFocus('g:' + p.id + '|' + m.id) ? 'on' : ''}" data-act="focus" data-k="g:${p.id}|${m.id}" title="Highlight as one of this week's two priorities">${isFocus('g:' + p.id + '|' + m.id) ? '★' : '☆'}</button>`}
+          ${m.done ? '' : `<button class="q ${isFocus('g:' + p.id + '|' + m.id) ? 'on' : ''}" data-act="focus" data-k="g:${p.id}|${m.id}" title="Highlight as one of this week's priorities">${isFocus('g:' + p.id + '|' + m.id) ? '★' : '☆'}</button>`}
           <button class="q" data-act="ms-up" data-id="${m.id}" title="Move up" ${i===0?'disabled':''}>↑</button>
           <button class="q" data-act="ms-down" data-id="${m.id}" title="Move down" ${i===mss.length-1?'disabled':''}>↓</button>
           <button class="q ${m.done?'':'on'}" data-act="ms-done" data-id="${m.id}">${m.done ? 'Reopen' : 'Mark reached'}</button>
