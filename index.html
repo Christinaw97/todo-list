@@ -748,7 +748,7 @@ function autoWeekOverdue(){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v36';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v37';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -974,7 +974,11 @@ function setWhen(t, when){
 }
 const handoffLine = t => short(today()) + ': did my part, now waiting' + (t.waitingOn ? ' on ' + t.waitingOn : '') + '.';
 const pingDays = () => leadNum(M.meta?.pingDays) || 7;
-const pingLabel = () => pingDays() === 7 ? '1 week' : pingDays() === 14 ? '2 weeks' : pingDays() + ' days';
+// Each waiting task can have its own check-back gap (t.pingEvery days), e.g. 1 for jobs you check daily
+const pingGap = t => (t && +t.pingEvery) || pingDays();
+const gapLabel = n => n === 1 ? 'day' : n === 7 ? 'week' : n === 14 ? '2 weeks' : n + ' days';
+const pingLabel = t => { const n = pingGap(t); return n === 7 ? '1 week' : n === 14 ? '2 weeks' : n + ' days'; };
+const pingBtn = (t, long) => pingGap(t) === 1 ? (long ? 'Checked today, again tomorrow' : 'Checked, again tomorrow') : (long ? 'Pinged today, remind in ' : 'Pinged, remind in ') + pingLabel(t);
 const STATUS_NAME = { todo:'To do', doing:'Doing', waiting:'Waiting', done:'Done' };
 // The next day you planned to act on a task (its planned day, or its earliest planned open step), if it's after today
 function nextActionDay(t){
@@ -985,6 +989,7 @@ function nextActionDay(t){
 }
 // When to follow up after handing something off: your next planned action, else in 3 days, but before the deadline
 function defaultPingDay(t){
+  if (+t.pingEvery) return addDays(today(), +t.pingEvery);
   const na = nextActionDay(t); if (na) return na;
   const td = today(); let d = addDays(td, pingDays());
   const dd = effDue(t);
@@ -1019,7 +1024,7 @@ function toggleDone(id){
 }
 function markPinged(id){
   const t = M.tasks.get(id); if (!t) return;
-  t.pingCount = (t.pingCount||0) + 1; t.lastPing = today(); t.pingBy = addDays(today(), pingDays());
+  t.pingCount = (t.pingCount||0) + 1; t.lastPing = today(); t.pingBy = addDays(today(), pingGap(t));
   saveTask(t); render();
 }
 function quickToday(id){
@@ -1341,7 +1346,7 @@ function taskRowOnly(t, ctx){
       <div class="t-title">${timeBit(t, null, ctx)}${(ctx === 'today' || ctx === 'week') && t.status === 'waiting' && !parked(t) ? '<span class="checkon">Check on:</span> ' : ''}${esc(t.title)}</div>
       <div class="chips">${chipsFor(t, ctx)}</div>
     </div>
-    ${t.status!=='done' && ctx === 'today' ? `<div class="t-quick">${timeBtn(t, null, ctx)}${t.status === 'waiting' && pingDue(t) ? `<button class="q on" data-act="pinged" data-id="${t.id}" title="Checked, still waiting: follow up again later">Pinged, again in ${pingLabel()}</button>` : `<button class="q" data-act="unplan" data-id="${t.id}" title="Take it off this day">Not ${UI.day===today()?'today':'this day'}</button>`}</div>` : ''}
+    ${t.status!=='done' && ctx === 'today' ? `<div class="t-quick">${timeBtn(t, null, ctx)}${t.status === 'waiting' && pingDue(t) ? `<button class="q on" data-act="pinged" data-id="${t.id}" title="Checked, still waiting: follow up again later">${pingGap(t) === 1 ? 'Checked, again tomorrow' : 'Pinged, again in ' + pingLabel(t)}</button>` : `<button class="q" data-act="unplan" data-id="${t.id}" title="Take it off this day">Not ${UI.day===today()?'today':'this day'}</button>`}</div>` : ''}
     ${t.status!=='done' && ctx !== 'today' ? `<div class="t-quick">
       <button class="q ${inToday?'on':''}" data-act="today" data-id="${t.id}" title="Plan for today">Today</button>
       <button class="q ${inWeek?'on':''}" data-act="week" data-id="${t.id}" title="Put on the week list">Week</button>
@@ -1582,7 +1587,7 @@ function renderWeek(){
         <span class="who">${esc(t.waitingOn || 'Someone')}</span>
         <span class="what" data-act="open" data-id="${t.id}">${esc(t.title)}</span>
         <span class="when">${t.pingBy < td ? 'was due ' + rel(t.pingBy) : 'due today'}${t.pingCount ? ', pinged ' + t.pingCount + '×' : ''}</span>
-        <button class="btn" data-act="pinged" data-id="${t.id}">Pinged, remind in ${pingLabel()}</button>
+        <button class="btn" data-act="pinged" data-id="${t.id}">${pingBtn(t)}</button>
         <button class="btn" data-act="done" data-id="${t.id}">Resolved</button>
       </div>`).join('') + `</div></div>`;
     }
@@ -1697,7 +1702,7 @@ function renderToday(){
     if (fu.length) h += `<div class="fu" style="margin-top:0;margin-bottom:16px"><div class="fu-h">Follow up today</div>` + fu.map(t => `<div class="fu-row">
         <span class="who">${esc(t.waitingOn || 'Someone')}</span>
         <span class="what" data-act="open" data-id="${t.id}">${esc(t.title)}</span>
-        <button class="btn" data-act="pinged" data-id="${t.id}">Pinged, remind in ${pingLabel()}</button>
+        <button class="btn" data-act="pinged" data-id="${t.id}">${pingBtn(t)}</button>
         <button class="btn" data-act="done" data-id="${t.id}">Resolved</button></div>`).join('') + `</div>`;
   }
 
@@ -2470,9 +2475,10 @@ function renderDrawer(){
           <label class="fld"><span class="lbl">Waiting on</span><input id="d-who" value="${esc(t.waitingOn)}" placeholder="Name" data-field="waitingOn"></label>
           <label class="fld"><span class="lbl">Ping again on</span><input type="date" id="d-ping" value="${t.pingBy}" data-field="pingBy"></label>
         </div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="meta">Check back in</span>${[3, 7, 14].map(n => `<button class="q ${t.pingBy === addDays(today(), n) ? 'on' : ''}" data-act="ping-in" data-id="${t.id}" data-n="${n}">${n === 7 ? '1 week' : n === 14 ? '2 weeks' : n + ' days'}</button>`).join('')}</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="meta">Check back</span>${[1, 3, 7, 14].map(n => `<button class="q ${+t.pingEvery === n ? 'on' : ''}" data-act="ping-in" data-id="${t.id}" data-n="${n}" title="Next check ${n === 1 ? 'tomorrow' : 'in ' + gapLabel(n)}, and the same gap after each check">every ${gapLabel(n)}</button>`).join('')}</div>
+        ${+t.pingEvery ? `<div class="meta" style="font-size:12px">Each time you mark it checked, it comes back ${+t.pingEvery === 1 ? 'the next day' : 'after ' + gapLabel(+t.pingEvery)}, until you mark it Done.</div>` : ''}
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="btn" data-act="pinged" data-id="${t.id}">Pinged today, remind in ${pingLabel()}</button>
+          <button class="btn" data-act="pinged" data-id="${t.id}">${pingBtn(t, true)}</button>
           <span class="meta">${t.pingCount ? `Pinged ${t.pingCount}× so far, last ${rel(t.lastPing)}` : 'Not pinged yet'}</span>
         </div></div>` : ''}
       <div class="grid2">
@@ -2637,7 +2643,7 @@ document.addEventListener('click', e => {
     case 'qa-tips': UI.qaTips = !UI.qaTips; break;
     case 'pick-more': UI.pickMore = !UI.pickMore; break;
     case 'block': { const t = M.tasks.get(id); if (t){ const s0 = effDay(t) || t.day, n = +el.dataset.n; t.day = s0; t.week = weekOf(s0); if (!hasWeek(t, t.week)) t.weeks.push(t.week); t.dayTo = n > 1 ? addDays(s0, n - 1) : ''; saveTask(t); } break; }
-    case 'ping-in': { const t = M.tasks.get(id); if (t){ t.pingBy = addDays(today(), +el.dataset.n); saveTask(t); } break; }
+    case 'ping-in': { const t = M.tasks.get(id); if (t){ const n = +el.dataset.n; if (+t.pingEvery === n && t.pingBy === addDays(today(), n)){ t.pingEvery = 0; } else { t.pingEvery = n; t.pingBy = addDays(today(), n); } saveTask(t); } break; }
     case 'focus': toggleFocus(el.dataset.k, el.dataset.w); break;
     case 'focus-last': { const W = el.dataset.w; setFocus(W, focusOf(addDays(W, -7)).slice(0, FOCUS_MAX)); break; }
     case 'proj-archive': { const p = projById(id); if (p){ p.archived = true; p.archivedAt = today(); saveMeta(); showNote('Archived “' + p.name + '”. You can find it under Archived in the sidebar.'); } break; }
