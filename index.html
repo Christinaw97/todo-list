@@ -355,6 +355,10 @@ textarea.notes:focus{border-color:var(--accent)}
 .ditem .blk{font-family:var(--mono);font-size:10px;color:var(--accent)}
 .chip.proj.link{cursor:pointer}
 .chip.proj.link:hover{color:var(--accent);border-color:var(--accent)}
+.chip.ms-chip.link{cursor:pointer}
+.chip.ms-chip.link:hover{color:var(--accent);border-color:var(--accent)}
+@keyframes msflash{0%,40%{box-shadow:0 0 0 3px var(--accent)}100%{box-shadow:0 0 0 0 transparent}}
+.card.ms.flash{animation:msflash 1.6s ease-out}
 #undo-bar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:310;display:flex;align-items:center;gap:12px;padding:7px 7px 7px 16px;border-radius:10px;background:#1d2633;color:#e5ecf5;box-shadow:var(--shadow);font-size:13.5px;max-width:calc(100vw - 32px)}
 #undo-bar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #undo-bar button{flex-shrink:0;background:none;border:1px solid #55667e;color:#8fb6ff;font:inherit;font-weight:600;padding:4px 14px;border-radius:6px;cursor:pointer}
@@ -741,7 +745,7 @@ function autoWeekOverdue(){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v34';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v35';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1219,13 +1223,18 @@ function projChip(t){
   const nav = p ? `data-act="nav" data-v="proj" data-id="${p.id}" title="Open ${esc(p.name)}"` : c ? `data-act="nav" data-v="cat" data-id="${c.id}" title="Open ${esc(c.name)}"` : `data-act="nav" data-v="inbox" title="Open the Inbox"`;
   return `<span class="chip proj link" ${nav}><i style="background:${catColor(t)}"></i>${esc(projLabel(t))}</span>`;
 }
+// The goal tag on a task: clicking it opens the project page and scrolls to that goal
+function goalChip(t){
+  const m = msById(t), p = projById(t.project); if (!m || !p) return '';
+  return `<span class="chip ms-chip link" data-act="nav" data-v="proj" data-id="${p.id}" data-ms="${m.id}" title="Open the goal ${esc(m.name)} in ${esc(p.name)}">⚑ ${esc(m.name)}</span>`;
+}
 function chipsFor(t, ctx){
   const out = [];
   if (t.star && t.status !== 'done') out.push(`<span class="chip imp" title="Marked important">! important</span>`);
   if (t.status !== 'done' && ctx !== 'proj' && taskFocus(t)) out.push(`<span class="chip focus" title="Part of this week's priorities">★</span>`);
   if (whoOf(t) && ctx !== 'people') out.push(`<span class="chip who" title="${esc(whoOf(t))} is doing this${!t.who && goalWho(t) ? ' (assigned with the goal)' : ''}">👤 ${esc(whoOf(t))}</span>`);
   if (ctx !== 'proj') out.push(projChip(t));
-  if (ctx !== 'proj'){ const m = msById(t); if (m) out.push(`<span class="chip ms-chip" title="Goal: ${esc(m.name)}">⚑ ${esc(m.name)}</span>`); }
+  if (ctx !== 'proj' && msById(t)) out.push(goalChip(t));
   if (t.status === 'doing') out.push(`<span class="chip doing">Doing</span>`);
   if (parked(t) && (ctx === 'today' || ctx === 'week')) out.push(`<span class="chip handed">◐ your part done</span>`);
   if (t.status === 'waiting'){
@@ -1811,8 +1820,8 @@ function goalsSec(D, cls){
     if (goalCheckIn(m, D)) chips.push(`<span class="chip mono soon">check-in ${m.remind === today() ? 'today' : rel(m.remind)}</span>`);
     chips.push(`<span class="chip mono">${st.done}/${st.total} tasks</span>`);
     return `<div class="task goal-row"><span class="g-flag">⚑</span>
-      <div class="t-main" data-act="nav" data-v="proj" data-id="${p.id}"><div class="t-title">${esc(m.name)}</div>${m.desc ? `<div class="g-desc">${esc(m.desc.length > 140 ? m.desc.slice(0, 140) + '…' : m.desc)}</div>` : ''}<div class="chips">${chips.join('')}</div></div>
-      <div class="t-quick">${goalCheckIn(m, D) ? `<button class="q" data-act="ms-checked" data-p="${p.id}" data-id="${m.id}" title="Clear the check-in reminder">Done</button>` : ''}<button class="q" data-act="nav" data-v="proj" data-id="${p.id}">Open</button></div></div>`;
+      <div class="t-main" data-act="nav" data-v="proj" data-id="${p.id}" data-ms="${m.id}"><div class="t-title">${esc(m.name)}</div>${m.desc ? `<div class="g-desc">${esc(m.desc.length > 140 ? m.desc.slice(0, 140) + '…' : m.desc)}</div>` : ''}<div class="chips">${chips.join('')}</div></div>
+      <div class="t-quick">${goalCheckIn(m, D) ? `<button class="q" data-act="ms-checked" data-p="${p.id}" data-id="${m.id}" title="Clear the check-in reminder">Done</button>` : ''}<button class="q" data-act="nav" data-v="proj" data-id="${p.id}" data-ms="${m.id}">Open</button></div></div>`;
   }).join('')}</div></div>`;
 }
 function unfinishedThisWeek(){
@@ -1921,7 +1930,7 @@ function kcard(t, showProj){
   }
   if (t.est && isOpen(t)) meta.push(`<span class="chip mono">≈ ${fmtDur(t.est)}</span>`);
   if (t.repeat && REPEAT_SHORT[t.repeat]) meta.push(`<span class="chip mono rep">⟳ ${REPEAT_SHORT[t.repeat]}</span>`);
-  if (showProj){ const m = msById(t); if (m) meta.push(`<span class="chip ms-chip">⚑ ${esc(m.name)}</span>`); }
+  if (showProj && msById(t)) meta.push(goalChip(t));
   const st = stepsOf(t), sd = st.filter(c => c.done).length;
   return `<div class="kcard s-${t.status}" draggable="true" data-drag="${t.id}">
     <button class="chk ${t.status}" data-act="done" data-id="${t.id}" aria-label="Toggle done">${t.status==='done'?'✓':''}</button>
@@ -2155,7 +2164,7 @@ function focusSec(W){
     h += `<div class="focus-grid">` + f.map(k => {
       const { p, m } = focusParts(k), all = tasks().filter(t => t.project === p.id && (!m || t.milestone === m.id)), done = all.filter(t => t.status === 'done').length, open = focusTasks(k);
       const due = m ? m.due : '', c = catById(p.cat);
-      return `<div class="card focus-card"><div class="fc-h"><span class="fc-star">★</span><div class="fc-t" data-act="nav" data-v="proj" data-id="${p.id}">${m ? '⚑ ' : ''}${esc(m ? m.name : p.name)}${m ? `<span class="fc-sub">${esc(p.name)}</span>` : `<span class="fc-sub">${esc(c?.name || '')}</span>`}</div>
+      return `<div class="card focus-card"><div class="fc-h"><span class="fc-star">★</span><div class="fc-t" data-act="nav" data-v="proj" data-id="${p.id}" ${m ? `data-ms="${m.id}"` : ''}>${m ? '⚑ ' : ''}${esc(m ? m.name : p.name)}${m ? `<span class="fc-sub">${esc(p.name)}</span>` : `<span class="fc-sub">${esc(c?.name || '')}</span>`}</div>
         <button class="q" data-act="focus" data-k="${k}" data-w="${W}" title="Remove from this week's priorities">✕</button></div>
         <div class="fc-m"><span class="ms-bar"><i style="width:${all.length ? Math.round(100 * done / all.length) : 0}%"></i></span>${done}/${all.length} done${due ? ` · due ${rel(due)}` : ''}</div>
         ${open.slice(0, 3).map(t => taskRowOnly(t, 'due')).join('') || '<div class="empty" style="padding:8px 14px">No open tasks. Add some on the project page.</div>'}
@@ -2267,7 +2276,7 @@ function renderProj(){
     const expanded = !m.done || UI.openMs.has(m.id);
     const ak = 'ms:' + m.id;
     const openT = st.list.filter(notDone), doneT = st.list.filter(t => !notDone(t));
-    h += `<div class="card ms ${isCur?'current':''} ${m.done?'reached':''}" data-drop-ms="${m.id}">
+    h += `<div class="card ms ${isCur?'current':''} ${m.done?'reached':''}" id="goal-${m.id}" data-drop-ms="${m.id}">
       <div class="ms-h ${isFocus('g:' + p.id + '|' + m.id) ? 'focus' : ''}">
         <span class="ms-num">${m.done ? '✓' : i + 1}</span>
         <input class="ms-name" id="ms-name-${m.id}" value="${esc(m.name)}" data-ren="ms" data-id="${m.id}" aria-label="Goal name">
@@ -2567,6 +2576,11 @@ document.addEventListener('click', e => {
       if (UI.view === 'search') setTimeout(() => document.getElementById('search-q')?.focus(), 40);
       if (UI.view === 'cat') UI.cat = id;
       if (UI.view === 'proj') UI.proj = id;
+      if (UI.view === 'proj' && el.dataset.ms){
+        const ms = el.dataset.ms; UI.openMs.add(ms);
+        setTimeout(() => { const g = document.getElementById('goal-' + ms); if (!g) return;
+          g.scrollIntoView({ block:'start', behavior:'smooth' }); g.classList.remove('flash'); void g.offsetWidth; g.classList.add('flash'); }, 60);
+      }
       if (UI.view === 'week') UI.week = curWeek();
       if (UI.view === 'today') UI.day = today();
       document.getElementById('side').classList.remove('open');
