@@ -663,6 +663,8 @@ const leadOf = t => leadNum(t.lead) ?? defLead();
 const goalWho = t => { const m = msById(t); return m && m.who ? m.who : ''; };
 const whoOf = t => { const w = (t.who || '').trim(); if (w.toLowerCase() === 'me') return ''; return w || goalWho(t); };
 const mine = t => !whoOf(t);
+// On my Today / This week lists: my tasks, plus someone else's open task I gave a planned day (e.g. to check in on it)
+const onMyList = t => mine(t) || (!!t.day && t.status !== 'done');
 function people(){ const m = new Map(); const add = w => { w = (w || '').trim(); if (w && w.toLowerCase() !== 'me' && !m.has(w.toLowerCase())) m.set(w.toLowerCase(), w); };
   for (const t of M.tasks.values()) add(whoOf(t)); for (const p of projs()) for (const g of msList(p)) add(g.who); return [...m.values()].sort((a,b) => a.localeCompare(b)); }
 function canonPerson(v){ v = (v || '').trim().replace(/^@/, ''); if (!v || /^(me|myself)$/i.test(v)) return ''; return people().find(p => p.toLowerCase() === v.toLowerCase()) || (v[0].toUpperCase() + v.slice(1)); }
@@ -731,7 +733,7 @@ function parseDur(v){
 const fmtDur = n => !n ? '' : n < 60 ? n + 'm' : Math.floor(n / 60) + 'h' + (n % 60 ? ' ' + (n % 60) + 'm' : '');
 const dayCap = () => Math.round((+M.meta?.dayHours || 6) * 60);
 const estOn = t => t.est ? Math.round(t.est / blockLen(t)) : 0;
-function dayLoad(D){ let n = 0; for (const t of M.tasks.values()) if (mine(t) && isOpen(t) && onDay(t, D) && !parked(t)) n += estOn(t); return n; }
+function dayLoad(D){ let n = 0; for (const t of M.tasks.values()) if (onMyList(t) && isOpen(t) && onDay(t, D) && !parked(t)) n += estOn(t); return n; }
 function loadTag(D, brief){
   const n = dayLoad(D); if (!n) return '';
   const over = n > dayCap();
@@ -748,7 +750,7 @@ function autoWeekOverdue(){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v38';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v39';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1461,15 +1463,15 @@ function requestRender(){
 }
 
 function renderSide(){
-  const open = tasks().filter(isOpen), openMine = open.filter(mine);
-  const wk = openMine.filter(t => effWeek(t) === curWeek()).length;
+  const open = tasks().filter(isOpen), openMine = open.filter(mine), openList = open.filter(onMyList);
+  const wk = openList.filter(t => effWeek(t) === curWeek()).length;
   const othersN = open.length - openMine.length;
   const waiting = open.filter(t => t.status === 'waiting');
   const due = waiting.filter(pingDue).length;
   let h = `<div class="brand">Todo List</div>${syncPill()}
     <button class="nav ${UI.view==='add'?'on':''}" data-act="nav" data-v="add"><span class="ic">+</span>Quick add</button>
     <button class="nav ${UI.view==='search'?'on':''}" data-act="nav" data-v="search" title="Search (press /)"><span class="ic">⌕</span>Search</button>
-    <button class="nav ${UI.view==='today'?'on':''}" data-act="nav" data-v="today"><span class="ic">☀</span>Today<span class="ct">${(openMine.filter(t => onDay(t, today())).length + allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sDay(c) === today() && effDay(t) !== today()).length)||''}</span></button>
+    <button class="nav ${UI.view==='today'?'on':''}" data-act="nav" data-v="today"><span class="ic">☀</span>Today<span class="ct">${(openList.filter(t => onDay(t, today())).length + allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sDay(c) === today() && effDay(t) !== today()).length)||''}</span></button>
     <button class="nav ${UI.view==='week'&&UI.week===curWeek()?'on':''}" data-act="nav" data-v="week"><span class="ic">◷</span>This week<span class="ct">${wk||''}</span></button>
     <button class="nav ${UI.view==='waiting'?'on':''}" data-act="nav" data-v="waiting"><span class="ic">⏳</span>Waiting on others<span class="ct ${due?'hot':''}">${due ? due+' to ping' : (waiting.length||'')}</span></button>
     <button class="nav ${UI.view==='people'?'on':''}" data-act="nav" data-v="people"><span class="ic">👤</span>People<span class="ct">${othersN||''}</span></button>
@@ -1548,7 +1550,7 @@ function renderWeek(){
   UI.week = normW(UI.week) || curWeek();
   const W = UI.week, cw = curWeek(), td = today();
   const isCur = W === cw, isPast = W < cw;
-  const all = tasks().filter(mine);
+  const all = tasks().filter(onMyList);
 
   // Week list: open tasks whose effective week is W, plus done tasks that were planned for W
   const planned = all.filter(t => isOpen(t) ? effWeek(t) === W : hasWeek(t, W) && t.doneDate && weekOf(t.doneDate) === W);
@@ -1595,7 +1597,7 @@ function renderWeek(){
 
   if (!isPast) h += `<div class="o-qa" style="margin-top:16px">${quickAdd(whenOpts)}</div>`;
   if (!isPast){ const asOf = isCur ? td : addDays(W, 6); h += goalsSec(asOf, 'o-due'); h += deadlinesSec(all.filter(t => surfaced(t, asOf) && effWeek(t) !== W), 'o-due');
-    h += peopleSec(tasks().filter(t => !mine(t) && isOpen(t) && (surfaced(t, asOf) || effWeek(t) === W)), 'o-due'); }
+    h += peopleSec(tasks().filter(t => !onMyList(t) && isOpen(t) && (surfaced(t, asOf) || effWeek(t) === W)), 'o-due'); }
 
   // Week list
   const unfinished = isCur ? unfinishedThisWeek() : null;
@@ -1674,7 +1676,7 @@ function accList(list, steps){
 
 function renderToday(){
   const td = today(), D = UI.day || td, isPast = D < td, isToday = D === td;
-  const all = tasks().filter(mine);
+  const all = tasks().filter(onMyList);
   const planned = all.filter(t => isOpen(t) ? onDay(t, D) : t.doneDate === D);
   const openP = sortTasks(planned.filter(isOpen)), doneP = planned.filter(t => !isOpen(t));
   const daySteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === D : (isOpen(t) && sDay(c) === D)));
@@ -1729,7 +1731,7 @@ function renderToday(){
   left += `</div></div>`;
   if (!isPast) left += goalsSec(D);
   if (!isPast) left += deadlinesSec(all.filter(t => surfaced(t, D) && !onDay(t, D)));
-  if (!isPast) left += peopleSec(tasks().filter(t => !mine(t) && isOpen(t) && (surfaced(t, D) || (effDay(t) && effDay(t) <= D))));
+  if (!isPast) left += peopleSec(tasks().filter(t => !onMyList(t) && isOpen(t) && (surfaced(t, D) || (effDay(t) && effDay(t) <= D))));
   const dn = M.weeks.get('d-' + D);
   left += `<div class="sec"><div class="sec-h"><h2>Notes for the day</h2><span class="n">time blocks, reminders, how it went</span></div>
     <textarea class="notes" id="day-notes" data-day="${D}" placeholder="Notes">${esc(dn?.note || '')}</textarea></div>`;
@@ -1834,7 +1836,7 @@ function goalsSec(D, cls){
 }
 function unfinishedThisWeek(){
   const cw = curWeek();
-  const ts = tasks().filter(t => mine(t) && isOpen(t) && effWeek(t) === cw);
+  const ts = tasks().filter(t => onMyList(t) && isOpen(t) && effWeek(t) === cw);
   const steps = allSteps().filter(({t,c}) => mine(t) && !c.done && isOpen(t) && sWeek(c) === cw && effWeek(t) !== cw);
   return { tasks: ts, steps };
 }
