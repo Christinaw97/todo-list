@@ -618,9 +618,11 @@ function msStats(p, m){ const l = tasks().filter(t => t.project === p.id && t.mi
 const handedDate = t => t.status !== 'waiting' ? '' : (t.handedOff || statusSince(t)?.d || '0000-00-00');
 // Waiting = your part is done. It's "parked" (out of the way) except on its ping date, when it's an action again
 const parked = t => t.status === 'waiting' && !(t.pingBy && t.pingBy <= today() && handedDate(t) < today());
+// Waiting with the next ping in a later week: off this week's lists until that week comes
+const pingLater = t => t.status === 'waiting' && t.pingBy && t.pingBy > today() && weekOf(t.pingBy) > curWeek();
 function effDay(t){
   if (t.status === 'done') return t.doneDate || '';
-  if (t.status === 'waiting'){ const td = today(), h = handedDate(t); if (h === td) return td; return t.pingBy && t.pingBy <= td ? td : ''; }
+  if (t.status === 'waiting'){ const td = today(), h = handedDate(t); if (pingLater(t)) return ''; if (h === td) return td; return t.pingBy && t.pingBy <= td ? td : ''; }
   if (!t.day) return '';
   const td = today();
   return t.day < td ? td : t.day;
@@ -633,6 +635,7 @@ function blockPos(t, d){ const len = blockLen(t); if (len < 2 || t.status === 'd
 const rolled = t => t.status !== 'done' && t.day && t.day < today() && !(t.dayTo && t.dayTo >= today());
 function effWeek(t){
   if (t.status === 'done') return t.doneDate ? weekOf(t.doneDate) : '';
+  if (pingLater(t)) return weekOf(t.pingBy);
   const d = effDay(t); if (d) return weekOf(d);
   if (!t.week) return '';
   const cw = curWeek(), w = normW(t.week); return w < cw ? cw : w;
@@ -745,7 +748,7 @@ function autoWeekOverdue(){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v35';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v36';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -2486,7 +2489,9 @@ function renderDrawer(){
           <option value="">Not planned</option>
           <option value="${curWeek()}" ${effWeek(t)===curWeek()?'selected':''}>This week</option>
           <option value="${addDays(curWeek(),7)}" ${effWeek(t)===addDays(curWeek(),7)?'selected':''}>Next week</option>
+          ${pingLater(t) && effWeek(t) > addDays(curWeek(),7) ? `<option value="${effWeek(t)}" selected>Week of ${short(effWeek(t))}</option>` : ''}
         </select></label>
+        ${pingLater(t) ? `<div class="fld" style="grid-column:1/-1;font-size:12px;color:var(--muted)">⏳ Your part is done, so this is off your lists until the week of ${short(weekOf(t.pingBy))}. It comes back as a follow-up on ${short(t.pingBy)}. Change “Ping again on” to bring it back sooner.</div>` : ''}
         <label class="fld"><span class="lbl">Time needed</span><input id="d-est" list="est-presets" value="${t.est ? fmtDur(t.est) : ''}" placeholder="e.g. 30m, 2h" data-field="est" autocomplete="off"><datalist id="est-presets">${['15m','30m','45m','1h','1h 30m','2h','3h','4h','6h'].map(x => `<option value="${x}">`).join('')}</datalist></label>
         <label class="fld"><span class="lbl">Repeat</span><select id="d-repeat" data-field="repeat"><option value="">Doesn’t repeat</option>${REPEATS.map(([k, l]) => `<option value="${k}" ${t.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         ${t.repeat && REPEAT_SHORT[t.repeat] ? `<div class="fld" style="grid-column:1/-1;font-size:12px;color:var(--muted)">${t.status === 'done' ? (t.spawned && M.tasks.has(t.spawned) ? 'The next one has been added.' : '') : (() => { const nx = repNext(t); return 'When you finish this, the next one is added' + (nx.day ? ' for ' + short(nx.day) : '') + (nx.due ? (nx.day ? ', due ' : ', due ') + short(nx.due) : '') + '.'; })()}</div>` : ''}
