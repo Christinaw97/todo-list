@@ -748,7 +748,7 @@ function autoWeekOverdue(){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v37';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v38';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -2489,7 +2489,7 @@ function renderDrawer(){
         ${goalDue(t) ? `<div class="fld" style="grid-column:1/-1;font-size:12px;color:var(--muted)">⚑ Goal “${esc(msById(t).name)}” is due ${short(goalDue(t))}. ${!t.due ? 'This task uses that deadline.' : dueFromGoal(t) ? 'That is earlier than this task’s own deadline, so it applies.' : 'This task’s own deadline is earlier, so it applies.'}</div>` : ''}
         ${effDue(t) ? `<label class="fld"><span class="lbl">Start showing &amp; reminding (days before)</span><input type="number" id="d-lead" inputmode="numeric" min="0" max="365" step="1" list="lead-presets" data-field="lead" value="${leadNum(t.lead) ?? ''}" placeholder="Default: ${defLead()}"></label>
         <div class="fld" style="grid-column:1/-1;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="meta" style="font-size:12px;color:var(--muted)">${t.status==='done' ? '' : surfaced(t) ? 'Showing in “Deadlines coming up” now.' : 'Shows up in “Deadlines coming up” from ' + short(showFrom(t)) + '.'}</span><button class="btn" data-act="cal-one" data-id="${t.id}">Add to calendar (.ics)</button></div>` : ''}
-        <label class="fld"><span class="lbl">Planned day</span><input type="date" id="d-day" value="${t.status==='done' ? (t.day||'') : effDay(t)}" data-field="day"></label>
+        <label class="fld"><span class="lbl">Planned day</span><input type="date" id="d-day" value="${t.status==='done' ? (t.day||'') : t.status === 'waiting' ? (t.pingBy || '') : effDay(t)}" data-field="day" ${t.status === 'waiting' ? 'title="For a waiting task this is the day it comes back to check on (same as Ping again on)"' : ''}></label>
         ${t.day && t.status !== 'done' && t.status !== 'waiting' ? `<div class="fld" style="grid-column:1/-1"><span class="lbl">Block off</span><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${[1, 2, 3, 5].map(n => `<button class="q ${blockLen(t) === n ? 'on' : ''}" data-act="block" data-id="${t.id}" data-n="${n}">${n === 1 ? '1 day' : n + ' days'}</button>`).join('')}<span class="meta">or through</span><input type="date" id="d-dayto" value="${blockLen(t) > 1 ? t.dayTo : ''}" min="${effDay(t)}" data-field="dayTo" style="font-size:12px;padding:2px 6px"></div></div>` : ''}
         <label class="fld"><span class="lbl">On the week list</span><select id="d-week" data-field="week">
           <option value="">Not planned</option>
@@ -2825,7 +2825,7 @@ document.addEventListener('change', e => {
   else if (f === 'repeat'){ if ((t.repeat || '') !== el.value){ t.repeat = el.value; saveTask(t); } }
   else if (f === 'dayTo'){ const v = el.value; t.dayTo = v && t.day && v > t.day ? v : ''; saveTask(t); }
   else if (f === 'lead'){ const n = leadNum(el.value); t.lead = n ?? ''; saveTask(t); }
-  else if (f === 'day'){ if (el.value) setWhen(t, el.value); else { t.day = ''; } saveTask(t); }
+  else if (f === 'day'){ if (el.value){ setWhen(t, el.value); if (t.status === 'waiting') t.pingBy = el.value; } else { t.day = ''; } saveTask(t); }
   else if (f === 'week'){ if (el.value){ t.day = (t.day && weekOf(t.day) === el.value) ? t.day : ''; t.week = el.value; if (!t.weeks.includes(el.value)) t.weeks.push(el.value); } else { t.day=''; t.week=''; } saveTask(t); }
   else if (f === 'who'){
     const raw = el.value.trim();
