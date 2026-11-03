@@ -760,7 +760,7 @@ function autoWeekOverdue(){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v41';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v42';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1557,6 +1557,21 @@ function quickAdd(whenOptions){
   </div><div class="prev" id="qa-prev"></div>`;
 }
 
+// Order of a day's open items (Today's Plan and the week's Day by day use the same): your drag order, else time, category, project; handed-off last
+function orderDay(D, entries){
+  const catIdx = t => { const c = taskCat(t); const i = cats().indexOf(c); return i < 0 ? 99 : i; };
+  entries.sort((a,b) => (timeStart(a.c ? a.c.time : a.t.time) - timeStart(b.c ? b.c.time : b.t.time)) || (catIdx(a.t) - catIdx(b.t)) || ((a.t.project||'') < (b.t.project||'') ? -1 : (a.t.project||'') > (b.t.project||'') ? 1 : 0) || (a.c ? 1 : 0) - (b.c ? 1 : 0));
+  const ordKey = e => e.c ? 's:' + e.t.id + '|' + e.c.id : 't:' + e.t.id;
+  const ord = dayOrder(D);
+  if (ord.length){
+    const pos = new Map(ord.map((k, i) => [k, i])), base = entries.slice();
+    entries.sort((a, b) => { const pa = pos.get(ordKey(a)), pb = pos.get(ordKey(b)); if (pa !== undefined && pb !== undefined) return pa - pb; if (pa !== undefined) return -1; if (pb !== undefined) return 1; return base.indexOf(a) - base.indexOf(b); });
+  }
+  // handed off today (your part done): out of the way at the end, just above Done
+  const handedToday = e => !e.c && parked(e.t);
+  entries.splice(0, entries.length, ...entries.filter(e => !handedToday(e)), ...entries.filter(handedToday));
+  return entries;
+}
 const DAY_MAX = 5;   // Day by day: items shown per day before "+ more"
 function renderWeek(){
   UI.week = normW(UI.week) || curWeek();
@@ -1643,6 +1658,7 @@ function renderWeek(){
   h += `<div class="sec o-days"><div class="sec-h"><h2>${isPast ? 'Done by day' : 'Day by day'}</h2><span class="spacer"></span><span class="n">${isPast ? '' : 'Unfinished items move to today automatically'}</span></div><div class="days-wrap"><div class="days">`;
   for (let i=0;i<7;i++){
     const d = addDays(W,i);
+    VIEW_DAY = d > td ? d : '';   // a future day: waiting tasks due a check that day are actions, as on Today
     const items0 = sortTasks(all.filter(t => isOpen(t) ? onDay(t, d) : t.doneDate === d));
     const items = [...items0.filter(t => !parked(t)), ...items0.filter(parked)];
     const dSteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === d : (isOpen(t) && sDay(c) === d)));
@@ -1658,8 +1674,9 @@ function renderWeek(){
       <span class="cd" style="background:${catColor(t)}"></span>
     </div>`;
     // Open work first, then handed-off, then done; long days show the first few with "+ more"
-    const entries = [...dSteps.filter(x => !x.c.done).map(stepH), ...items.filter(t => t.status !== 'done' && !parked(t)).map(itemH),
-      ...items.filter(t => t.status !== 'done' && parked(t)).map(itemH), ...dSteps.filter(x => x.c.done).map(stepH), ...items.filter(t => t.status === 'done').map(itemH)];
+    const openT = items.filter(t => t.status !== 'done');
+    const entries = [...orderDay(d, [...openT.map(t => ({ t, c:null })), ...dSteps.filter(x => !x.c.done && !openT.includes(x.t))]).map(e => e.c ? stepH(e) : itemH(e.t)),
+      ...dSteps.filter(x => x.c.done && !openT.includes(x.t)).map(stepH), ...items.filter(t => t.status === 'done').map(itemH)];
     const nDone = items.filter(t => t.status === 'done').length + dSteps.filter(x => x.c.done).length;
     const foldBtn = !isPast && d < td && entries.length ? `<button class="day-fold" data-act="day-more" data-d="${d}">${full ? 'hide' : nDone + ' done ▸'}</button>` : '';
     h += `<div class="day ${cls} ${entries.length?'':'noitems'} ${folded ? 'folded' : ''}" ${d >= td ? `data-drop="${d}"` : ''}><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${dayName(d)}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}${d >= td ? loadTag(d, true) : ''}${foldBtn}</div>`;
@@ -1674,6 +1691,7 @@ function renderWeek(){
     }
     h += `</div>`;
   }
+  VIEW_DAY = '';
   h += `</div></div></div>`;
 
   // Accomplished
@@ -1744,17 +1762,9 @@ function renderTodayIn(){
   left += `<div class="sec" style="margin-top:${isPast?0:16}px"><div class="sec-h"><h2>${isPast ? 'Done that day' : 'Plan'}</h2><span class="n">${isPast ? doneN : (openP.length + flatOpen.length) + ' to do'}</span>${isPast ? '' : loadTag(D)}${!isPast && dayOrder(D).length ? `<span class="spacer"></span><button class="q" data-act="ord-reset" data-d="${D}" title="Go back to ordering by time and project">Reset order</button>` : ''}</div><div class="card" data-drop="${D}" data-order-day="${D}">`;
   if (isPast) left += doneN ? doneP.map(t => taskRow(t,'today')).join('') + daySteps.filter(x => x.c.done).map(({t,c}) => stepRow(t, c, true, 'today')).join('') : `<div class="empty">Nothing was marked done.</div>`;
   else {
-    const catIdx = t => { const c = taskCat(t); const i = cats().indexOf(c); return i < 0 ? 99 : i; };
-    const entries = [...openP.map(t => ({ t, c:null })), ...flatOpen].sort((a,b) => (timeStart(a.c ? a.c.time : a.t.time) - timeStart(b.c ? b.c.time : b.t.time)) || (catIdx(a.t) - catIdx(b.t)) || ((a.t.project||'') < (b.t.project||'') ? -1 : (a.t.project||'') > (b.t.project||'') ? 1 : 0) || (a.c ? 1 : 0) - (b.c ? 1 : 0));
     const ordKey = e => e.c ? 's:' + e.t.id + '|' + e.c.id : 't:' + e.t.id;
-    const ord = dayOrder(D);
-    if (ord.length){
-      const pos = new Map(ord.map((k, i) => [k, i])), base = entries.slice();
-      entries.sort((a, b) => { const pa = pos.get(ordKey(a)), pb = pos.get(ordKey(b)); if (pa !== undefined && pb !== undefined) return pa - pb; if (pa !== undefined) return -1; if (pb !== undefined) return 1; return base.indexOf(a) - base.indexOf(b); });
-    }
-    // handed off today (your part done): out of the way at the end, just above Done
     const handedToday = e => !e.c && parked(e.t);
-    entries.splice(0, entries.length, ...entries.filter(e => !handedToday(e)), ...entries.filter(handedToday));
+    const entries = orderDay(D, [...openP.map(t => ({ t, c:null })), ...flatOpen]);
     left += entries.length ? entries.map(e => e.c ? `<div class="ord" data-ord="${ordKey(e)}" draggable="true" data-drag-step="${e.t.id}|${e.c.id}">${stepRow(e.t, e.c, true, 'today')}<span class="grip" data-grip aria-hidden="true">⋮⋮</span></div>` : `<div class="ord ${handedToday(e) ? 'handed-row' : ''}" data-ord="${ordKey(e)}">${taskRow(e.t, 'today')}<span class="grip" data-grip aria-hidden="true">⋮⋮</span></div>`).join('') : `<div class="empty">${isToday ? 'Nothing planned for today yet. Pick tasks or steps from your projects on the right.' : 'Nothing planned yet. Pick tasks or steps on the right.'}</div>`;
     if (doneP.length || flatDone.length) left += `<div class="grp"><div class="grp-h">Done<span class="n">${doneP.length + flatDone.length}</span></div>${doneP.map(t => taskRow(t,'today')).join('')}${flatDone.map(({t,c}) => stepRow(t, c, true, 'today')).join('')}</div>`;
   }
