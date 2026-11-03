@@ -203,6 +203,11 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .day-h span{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .day-h em{font-style:normal;margin-left:auto;font-size:11px;color:var(--accent);font-weight:600}
 .day-list{padding:4px 0;flex:1}
+.day.folded{min-height:0}
+.day.folded .day-h{border-bottom:0}
+.day-fold{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto;border:0;background:none;padding:0;cursor:pointer}
+.day-fold:hover,.day-more:hover{color:var(--accent)}
+.day-more{display:block;border:0;background:none;padding:4px 10px 6px;font-size:12px;color:var(--muted);cursor:pointer;text-align:left}
 .ditem{display:flex;gap:7px;align-items:flex-start;padding:4px 10px;font-size:12.5px}
 .ditem:hover{background:var(--panel2)}
 .ditem .chk{width:14px;height:14px;font-size:8px;margin-top:2px;border-width:2px}
@@ -537,6 +542,8 @@ body.v-board .kcol-b > *{flex-shrink:0}
   .weekv .o-head{order:0}.weekv .o-focus{order:1}.weekv .o-fu{order:1}.weekv .o-due{order:1}.weekv .o-qa{order:2}.weekv .o-days{order:3}.weekv .o-list{order:4}.weekv .o-acc{order:5}.weekv .o-notes{order:6}
   .day.past.noitems{display:none}
   .day{min-height:0}
+  .day.noitems .day-list{display:none}
+  .day.noitems .day-h{border-bottom:0}
   #fab{display:grid;place-items:center}
   #undo-bar{left:16px;right:88px;transform:none;max-width:none}
   .today-grid{grid-template-columns:1fr}
@@ -753,7 +760,7 @@ function autoWeekOverdue(){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v40';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v41';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -942,7 +949,8 @@ const UI = {
   lastWhen: 'today',
   recent: [],
   lastMs: {},
-  openMs: new Set()
+  openMs: new Set(),
+  dayOpen: new Set()   // Day by day: days shown in full
 };
 const HASH_VIEWS = ['today','week','board','add','waiting','log','inbox','sync','people','archived','search'];
 function applyHash(){
@@ -1549,6 +1557,7 @@ function quickAdd(whenOptions){
   </div><div class="prev" id="qa-prev"></div>`;
 }
 
+const DAY_MAX = 5;   // Day by day: items shown per day before "+ more"
 function renderWeek(){
   UI.week = normW(UI.week) || curWeek();
   const W = UI.week, cw = curWeek(), td = today();
@@ -1638,18 +1647,32 @@ function renderWeek(){
     const items = [...items0.filter(t => !parked(t)), ...items0.filter(parked)];
     const dSteps = allSteps().filter(({t,c}) => mine(t) && (c.done ? c.doneDate === d : (isOpen(t) && sDay(c) === d)));
     const cls = d === td ? 'today' : d < td ? 'past' : '';
-    h += `<div class="day ${cls} ${items.length||dSteps.length?'':'noitems'}" ${d >= td ? `data-drop="${d}"` : ''}><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${dayName(d)}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}${d >= td ? loadTag(d, true) : ''}</div><div class="day-list">`;
-    if (!items.length && !dSteps.length) h += `<div class="day-empty">${d < td ? '' : 'Drop a task here'}</div>`;
-    h += dSteps.map(({t,c}) => `<div class="ditem ${c.done?'is-done':''}" ${c.done ? '' : `draggable="true" data-drag-step="${t.id}|${c.id}"`}>
+    const full = UI.dayOpen.has(d), folded = !isPast && d < td && !full;
+    const stepH = ({t,c}) => `<div class="ditem ${c.done?'is-done':''}" ${c.done ? '' : `draggable="true" data-drag-step="${t.id}|${c.id}"`}>
       <button class="sq ${c.done?'done':''}" data-act="step-toggle" data-id="${t.id}" data-s="${c.id}" aria-label="Toggle step">${c.done?'✓':''}</button>
       <span class="dt" data-act="open" data-id="${t.id}">${c.time && !c.done ? `<span class="tm">${esc(c.time)}</span>` : ''}${esc(c.text)}${sRolled(c)?' <span class="r">↻</span>':''}<span class="dsub">↳ ${esc(t.title)}</span></span>
-      <span class="cd" style="background:${catColor(t)}"></span></div>`).join('');
-    h += items.map(t => `<div class="ditem ${t.status==='done'?'is-done':''} ${parked(t) ? 'handed-row' : ''} ${t.status !== 'done' && blockPos(t, d) ? 'block' : ''}" ${t.status==='done' ? '' : `draggable="true" data-drag="${t.id}"`}>
+      <span class="cd" style="background:${catColor(t)}"></span></div>`;
+    const itemH = t => `<div class="ditem ${t.status==='done'?'is-done':''} ${parked(t) ? 'handed-row' : ''} ${t.status !== 'done' && blockPos(t, d) ? 'block' : ''}" ${t.status==='done' ? '' : `draggable="true" data-drag="${t.id}"`}>
       <button class="chk ${t.status} ${parked(t) ? 'handed' : ''}" data-act="done" data-id="${t.id}" aria-label="Toggle done">${t.status==='done'?'✓':''}</button>
       <span class="dt" data-act="open" data-id="${t.id}">${t.time && isOpen(t) ? `<span class="tm">${esc(t.time)}</span>` : ''}${esc(t.title)}${t.status==='waiting'?' <span class="r">⏳</span>':''}${t.status !== 'done' && blockPos(t, d) ? ` <span class="blk">${blockPos(t, d).n}/${blockPos(t, d).of}</span>` : ''}${rolled(t)?` <span class="r" title="Moved from ${short(t.day)}">↻</span>`:''}</span>
       <span class="cd" style="background:${catColor(t)}"></span>
-    </div>`).join('');
-    h += `</div></div>`;
+    </div>`;
+    // Open work first, then handed-off, then done; long days show the first few with "+ more"
+    const entries = [...dSteps.filter(x => !x.c.done).map(stepH), ...items.filter(t => t.status !== 'done' && !parked(t)).map(itemH),
+      ...items.filter(t => t.status !== 'done' && parked(t)).map(itemH), ...dSteps.filter(x => x.c.done).map(stepH), ...items.filter(t => t.status === 'done').map(itemH)];
+    const nDone = items.filter(t => t.status === 'done').length + dSteps.filter(x => x.c.done).length;
+    const foldBtn = !isPast && d < td && entries.length ? `<button class="day-fold" data-act="day-more" data-d="${d}">${full ? 'hide' : nDone + ' done ▸'}</button>` : '';
+    h += `<div class="day ${cls} ${entries.length?'':'noitems'} ${folded ? 'folded' : ''}" ${d >= td ? `data-drop="${d}"` : ''}><div class="day-h"><b class="link" data-act="goto-day" data-d="${d}" title="Plan this day">${dayName(d)}</b><span>${short(d)}</span>${d===td?'<em>Today</em>':''}${d >= td ? loadTag(d, true) : ''}${foldBtn}</div>`;
+    if (!folded){
+      h += `<div class="day-list">`;
+      if (!entries.length) h += `<div class="day-empty">${d < td ? '' : 'Drop a task here'}</div>`;
+      const show = full || entries.length <= DAY_MAX + 1 ? entries.length : DAY_MAX;
+      h += entries.slice(0, show).join('');
+      if (show < entries.length) h += `<button class="day-more" data-act="day-more" data-d="${d}">+ ${entries.length - show} more</button>`;
+      else if (full && entries.length > DAY_MAX + 1) h += `<button class="day-more" data-act="day-more" data-d="${d}">Show less</button>`;
+      h += `</div>`;
+    }
+    h += `</div>`;
   }
   h += `</div></div></div>`;
 
@@ -2606,6 +2629,7 @@ document.addEventListener('click', e => {
       document.getElementById('side').classList.remove('open');
       document.getElementById('scroll').scrollTop = 0;
       break;
+    case 'day-more': { const d = el.dataset.d; UI.dayOpen.has(d) ? UI.dayOpen.delete(d) : UI.dayOpen.add(d); break; }
     case 'collapse': UI.collapsed.has(id) ? UI.collapsed.delete(id) : UI.collapsed.add(id); lsSet('lt_collapsed', JSON.stringify([...UI.collapsed])); break;
     case 'add-cat': UI.adding = 'cat'; UI.addColor = PALETTE[cats().length % PALETTE.length]; render(); document.getElementById('side-new')?.focus(); return;
     case 'add-proj': UI.adding = id; render(); document.getElementById('side-new')?.focus(); return;
