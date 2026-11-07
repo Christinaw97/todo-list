@@ -225,7 +225,7 @@ main{flex:1;min-width:0;display:flex;flex-direction:column}
 .acc-cat ul{margin:0;padding-left:22px}
 .acc-cat li{font-size:13px;padding:1px 0}
 .acc-cat li span{color:var(--muted)}
-textarea.notes{width:100%;min-height:110px;resize:vertical;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:12px 14px;outline:none;line-height:1.55}
+textarea.notes{width:100%;min-height:110px;resize:none;overflow:hidden;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:12px 14px;outline:none;line-height:1.55}
 textarea.notes:focus{border-color:var(--accent)}
 
 /* Log */
@@ -760,7 +760,7 @@ function autoWeekOverdue(){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v42';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v43';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1451,6 +1451,7 @@ function render(){
   const dt = document.getElementById('d-title');
   if (dt){ dt.style.height = 'auto'; dt.style.height = dt.scrollHeight + 'px'; }
   document.querySelectorAll('.ms-desc').forEach(el => { if (el.value){ el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } });
+  document.querySelectorAll('textarea.notes').forEach(growNotes);
   restoreScroll(scrollSaved, viewKey === lastRenderedView);
   rendering = false;
   if (matchMedia('(hover: none) and (pointer: coarse)').matches) document.querySelectorAll('[draggable="true"]').forEach(el => el.removeAttribute('draggable'));   // touch uses press-and-hold dragging instead
@@ -2892,7 +2893,15 @@ let noteTimer = null;
 document.addEventListener('focusout', e => {
   if (e.target.dataset?.stepDate){ const k = e.target.id; setTimeout(() => { const i = document.getElementById(k); if (UI.stepPick === k && document.activeElement !== i){ UI.stepPick = null; render(); } }, 250); } if (e.target.id === 'time-edit' && !rendering && UI.editTime === e.target.dataset.tkey){ const el = e.target; commitTime(el); UI.editTime = null; setTimeout(() => requestRender(), 160); }
 });
+// Week/day notes grow to fit all their text (no inner scrollbar); keep the page where it is while resizing
+function growNotes(el){
+  const sc = document.getElementById('scroll'), top = sc ? sc.scrollTop : 0;
+  el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px';
+  if (sc) sc.scrollTop = top;
+}
+window.addEventListener('resize', () => document.querySelectorAll('textarea.notes').forEach(growNotes));
 document.addEventListener('input', e => {
+  if (e.target.matches?.('textarea.notes')) growNotes(e.target);
   if (e.target.id === 'day-notes'){
     const D = e.target.dataset.day, val = e.target.value;
     clearTimeout(noteTimer);
