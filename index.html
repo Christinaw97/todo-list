@@ -78,6 +78,11 @@ aside{width:240px;flex-shrink:0;background:var(--side);color:var(--side-text);ov
 .cat-row .dot,.proj-row .dot{width:8px;height:8px;border-radius:2px;flex-shrink:0}
 .chev{border:0;background:none;color:var(--side-dim);width:16px;padding:0;font-size:10px}
 .proj-row{padding-left:30px;font-size:12.5px}
+.s-ins-before{box-shadow:inset 0 2px 0 var(--accent)}
+.s-ins-after{box-shadow:inset 0 -2px 0 var(--accent)}
+.s-into{background:color-mix(in srgb,var(--accent) 18%,transparent);border-radius:6px}
+.s-dragging{opacity:.4}
+@media (hover:none){ [data-sdrag]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none} }
 .proj-row .dot{width:5px;height:5px;border-radius:50%;opacity:.8}
 .side-add{padding:5px 8px 5px 30px;font-size:12px;color:var(--side-dim);border:0;background:none;text-align:left;width:100%;border-radius:6px}
 .side-add:hover{color:var(--side-strong);background:var(--side-hover)}
@@ -760,7 +765,7 @@ function autoWeekOverdue(){
 }
 
 /* ============ Storage: local first, synced to a private GitHub repo ============ */
-const APP_VERSION = 'todo-v43';   // keep in step with VERSION in sw.js
+const APP_VERSION = 'todo-v44';   // keep in step with VERSION in sw.js
 const LS_KEY = 'lt_state_v1', LS_GH = 'lt_github', LS_DIRTY = 'lt_dirty', LS_LAST = 'lt_lastsync';
 let ready = false;
 M.deleted = {};
@@ -1496,14 +1501,14 @@ function renderSide(){
   for (const c of cats()){
     const n = open.filter(t => taskCat(t)?.id === c.id).length;
     const col = UI.collapsed.has(c.id);
-    h += `<div style="display:flex;align-items:center">
+    h += `<div style="display:flex;align-items:center" draggable="true" data-sdrag="c:${c.id}" title="Drag to reorder">
       <button class="chev" data-act="collapse" data-id="${c.id}" aria-label="Toggle">${col?'▸':'▾'}</button>
       <button class="nav cat-row ${UI.view==='cat'&&UI.cat===c.id?'on':''}" data-act="nav" data-v="cat" data-id="${c.id}" style="padding-left:4px"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}<span class="ct">${n||''}</span></button>
     </div>`;
     if (!col){
       for (const p of projs().filter(p => p.cat === c.id && !p.archived)){
         const pn = open.filter(t => t.project === p.id).length;
-        h += `<button class="nav proj-row ${UI.view==='proj'&&UI.proj===p.id?'on':''}" data-act="nav" data-v="proj" data-id="${p.id}"><span class="dot" style="background:${c.color}"></span>${isFocus('p:' + p.id) || msList(p).some(m => isFocus('g:' + p.id + '|' + m.id)) ? '<span class="side-star">★</span>' : ''}${esc(p.name)}<span class="ct">${pn||''}</span></button>`;
+        h += `<button class="nav proj-row ${UI.view==='proj'&&UI.proj===p.id?'on':''}" data-act="nav" data-v="proj" data-id="${p.id}" draggable="true" data-sdrag="p:${p.id}"><span class="dot" style="background:${c.color}"></span>${isFocus('p:' + p.id) || msList(p).some(m => isFocus('g:' + p.id + '|' + m.id)) ? '<span class="side-star">★</span>' : ''}${esc(p.name)}<span class="ct">${pn||''}</span></button>`;
       }
       h += UI.adding === c.id ? sideInput(c.id) : `<button class="side-add" data-act="add-proj" data-id="${c.id}">+ Project</button>`;
     }
@@ -3015,6 +3020,87 @@ document.addEventListener('drop', e => {
   if (ref && canDrop(z, ref)) dropUndo(z, ref, e.clientY);
 });
 
+/* Sidebar: drag categories and projects to reorder them (a project can also go to another category) */
+let SD = null;   // { ref, el }
+const sdClear = () => document.querySelectorAll('.s-ins-before,.s-ins-after,.s-into').forEach(x => x.classList.remove('s-ins-before','s-ins-after','s-into'));
+// Where a drop at (x,y) would land: { el, pos: 'before'|'after'|'into' } or null
+function sdTarget(ref, x, y){
+  const t = document.elementFromPoint(x, y)?.closest('#side [data-sdrag]'); if (!t) return null;
+  const tr = t.dataset.sdrag; if (tr === ref) return null;
+  const r = t.getBoundingClientRect(), half = y < r.top + r.height / 2 ? 'before' : 'after';
+  if (ref[0] === 'c') return tr[0] === 'c' ? { el: t, pos: half } : null;
+  // a project: next to another project, or onto a category row (to the end of that category)
+  return tr[0] === 'p' ? { el: t, pos: half } : { el: t, pos: 'into' };
+}
+function sdMark(z){ sdClear(); if (z) z.el.classList.add(z.pos === 'into' ? 's-into' : 's-ins-' + z.pos); }
+function sdDrop(ref, z){
+  if (!z || !M.meta) return;
+  const tr = z.el.dataset.sdrag, id = ref.slice(2), tid = tr.slice(2);
+  const before = undoStart(ref[0] === 'p' ? [...M.tasks.values()].filter(t => t.project === id).map(t => t.id) : [], true);
+  if (ref[0] === 'c'){
+    const a = M.meta.categories, from = a.findIndex(c => c.id === id); if (from < 0) return;
+    const [c] = a.splice(from, 1); let to = a.findIndex(x => x.id === tid); if (to < 0) { a.splice(from, 0, c); return; }
+    a.splice(z.pos === 'after' ? to + 1 : to, 0, c);
+    saveMeta(); render(); offerUndo('Moved category “' + c.name + '”', before); return;
+  }
+  const a = M.meta.projects, from = a.findIndex(p => p.id === id); if (from < 0) return;
+  const [p] = a.splice(from, 1), oldCat = p.cat;
+  if (z.pos === 'into'){
+    p.cat = tid; let last = -1; a.forEach((x, i) => { if (x.cat === tid) last = i; });
+    a.splice(last < 0 ? a.length : last + 1, 0, p);
+  } else {
+    const to = a.findIndex(x => x.id === tid); if (to < 0){ a.splice(from, 0, p); return; }
+    p.cat = a[to].cat; a.splice(z.pos === 'after' ? to + 1 : to, 0, p);
+  }
+  if (p.cat !== oldCat){ UI.collapsed.delete(p.cat); for (const t of M.tasks.values()) if (t.project === p.id && t.cat !== p.cat){ t.cat = p.cat; saveTask(t); } }
+  saveMeta(); render();
+  offerUndo(p.cat !== oldCat ? 'Moved “' + p.name + '” to ' + (catById(p.cat)?.name || 'another category') : 'Moved project “' + p.name + '”', before);
+}
+document.addEventListener('dragstart', e => {
+  const el = e.target.closest?.('[data-sdrag]'); if (!el) return;
+  SD = { ref: el.dataset.sdrag, el }; e.dataTransfer.setData('text/plain', 'side:' + SD.ref); e.dataTransfer.effectAllowed = 'move';
+  el.classList.add('s-dragging');
+});
+document.addEventListener('dragover', e => { if (!SD) return; const z = sdTarget(SD.ref, e.clientX, e.clientY); sdMark(z); if (z) e.preventDefault(); });
+document.addEventListener('drop', e => { if (!SD) return; e.preventDefault(); const z = sdTarget(SD.ref, e.clientX, e.clientY), ref = SD.ref; sdClear(); SD = null; sdDrop(ref, z); });
+document.addEventListener('dragend', () => { if (!SD) return; SD.el.classList.remove('s-dragging'); sdClear(); SD = null; });
+// Touch: press and hold a sidebar row, then drag
+let SDT = null;
+document.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1) return;
+  const el = e.target.closest?.('#side [data-sdrag]'); if (!el) return;
+  const p = e.touches[0];
+  SDT = { el, ref: el.dataset.sdrag, x: p.clientX, y: p.clientY, x0: p.clientX, y0: p.clientY, active: false };
+  SDT.timer = setTimeout(() => {
+    if (!SDT) return;
+    SDT.active = true; el.classList.add('s-dragging');
+    const r = el.getBoundingClientRect(), g = el.cloneNode(true);
+    g.removeAttribute('data-sdrag'); g.classList.remove('s-dragging'); g.classList.add('drag-ghost');
+    g.style.width = r.width + 'px'; g.style.left = r.left + 'px'; g.style.top = r.top + 'px';
+    SDT.dy = SDT.y - r.top; document.body.appendChild(g); SDT.ghost = g;
+    try { navigator.vibrate?.(12); } catch(err){}
+  }, 350);
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!SDT) return;
+  const p = e.touches[0];
+  if (!SDT.active){ if (Math.hypot(p.clientX - SDT.x0, p.clientY - SDT.y0) > 10){ clearTimeout(SDT.timer); SDT = null; } return; }
+  e.preventDefault(); SDT.x = p.clientX; SDT.y = p.clientY;
+  SDT.ghost.style.top = (SDT.y - SDT.dy) + 'px';
+  const side = document.getElementById('side'), r = side.getBoundingClientRect();
+  if (SDT.y < r.top + 50) side.scrollTop -= 8; else if (SDT.y > r.bottom - 50) side.scrollTop += 8;
+  sdMark(sdTarget(SDT.ref, SDT.x, SDT.y));
+}, { passive: false });
+document.addEventListener('touchend', e => {
+  if (!SDT) return;
+  const d = SDT; SDT = null; clearTimeout(d.timer);
+  if (!d.active) return;
+  e.preventDefault(); touchDropAt = Date.now();
+  d.ghost?.remove(); d.el.classList.remove('s-dragging');
+  const z = sdTarget(d.ref, d.x, d.y); sdClear(); sdDrop(d.ref, z);
+}, { passive: false });
+document.addEventListener('touchcancel', () => { if (!SDT) return; clearTimeout(SDT.timer); SDT.ghost?.remove(); SDT.el.classList.remove('s-dragging'); sdClear(); SDT = null; });
+
 /* Touch: press and hold a task or step, then drag it (phones and tablets) */
 const IS_TOUCH = matchMedia('(hover: none) and (pointer: coarse)').matches;
 let TD = null, touchDropAt = 0;
@@ -3084,14 +3170,14 @@ document.addEventListener('touchstart', e => {
 }, { passive: true });
 document.addEventListener('touchend', e => {
   const s0 = SWP; SWP = null;
-  if (!s0 || TD || Date.now() - touchDropAt < 400) return;
+  if (!s0 || TD || SDT || Date.now() - touchDropAt < 400) return;
   const p = e.changedTouches[0], dx = p.clientX - s0.x, dy = p.clientY - s0.y;
   if (Date.now() - s0.t > 700 || Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
   const side = document.getElementById('side'), isOpen = side.classList.contains('open');
   if (dx > 0 && !isOpen && !UI.open && (!s0.sideways || s0.x < 30)) toggleSide();
   else if (dx < 0 && isOpen) toggleSide();
 }, { passive: true });
-document.addEventListener('contextmenu', e => { if (TD) e.preventDefault(); });
+document.addEventListener('contextmenu', e => { if (TD || SDT) e.preventDefault(); });
 // the tap that ends a drag shouldn't also open the task
 document.addEventListener('click', e => { if (Date.now() - touchDropAt < 500){ e.stopPropagation(); e.preventDefault(); } }, true);
 
